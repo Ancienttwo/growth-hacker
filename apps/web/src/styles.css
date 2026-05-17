@@ -1410,6 +1410,14 @@ pre {
   color: var(--destructive);
 }
 
+.chat-message-notice {
+  max-width: 100%;
+  align-self: stretch;
+  border-color: color-mix(in oklch, var(--primary) 24%, var(--border));
+  background: color-mix(in oklch, var(--primary) 7%, var(--card));
+  color: var(--foreground);
+}
+
 .chat-message-role {
   color: currentColor;
   font-size: 11px;

@@ -235,6 +235,23 @@ export interface SocialAgent {
   runner: AgentRunnerKind;
 }
 
+export interface DashboardChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  agentId?: string;
+  parentSessionId?: string;
+  hermesSessionId?: string;
+  handoffSummary?: string;
+  events: Record<string, unknown>[];
+}
+
+export interface DashboardChatSessionState {
+  sessions: DashboardChatSession[];
+  activeId?: string;
+}
+
 export interface HermesLlmSelection {
   provider: string;
   model: string;

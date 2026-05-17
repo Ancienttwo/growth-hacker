@@ -89,7 +89,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { buildHermesChatInputFromTranscript } from "@/chatInput";
 import { resolveChatMarkdownImageUrl } from "@/chatMarkdown";
+import { findRunMissingTerminalEvent, hasTerminalEventForRun, isStatusPollTimeoutEvent, isTerminalRunEvent } from "@/chatRunStatus";
 import { intlLocale, languageLabel, speechLocale, useI18n, type I18nKey, type I18nLocale, type TFunction } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -222,6 +224,15 @@ interface HermesChatRunStatus {
   createdAt?: number;
 }
 
+interface ChatSessionsResponse {
+  sessions: ChatSession[];
+  activeId?: string;
+}
+
+interface ChatSessionResponse {
+  session: ChatSession;
+}
+
 interface PersistHermesRunArtifactsResponse {
   artifacts: Array<{
     path: string;
@@ -275,6 +286,7 @@ interface HermesChatEvent {
   command?: string;
   message?: string;
   agentId?: string;
+  agentMessage?: string;
   model?: string;
   permissionMode?: string;
   reasoningEffort?: string;
@@ -300,6 +312,9 @@ interface ChatSession {
   createdAt: number;
   updatedAt: number;
   agentId?: string;
+  parentSessionId?: string;
+  hermesSessionId?: string;
+  handoffSummary?: string;
   events: HermesChatEvent[];
 }
 
@@ -459,6 +474,8 @@ const chatDefaultSessionTitle = "New session";
 const chatSessionLimit = 24;
 const chatSessionsStorageKey = "growth-hacker.chatSessions";
 const activeChatSessionStorageKey = "growth-hacker.activeChatSessionId";
+const chatSessionSaveQueues = new Map<string, Promise<void>>();
+const chatSessionSaveVersions = new Map<string, number>();
 const chatModelContextWindows: Record<string, number> = {
   "gpt-5.5": 258000,
   "gpt-5.4": 1050000,
@@ -667,9 +684,8 @@ export function App() {
   }, [selectedLlmValue]);
 
   useEffect(() => {
-    localStorage.setItem(chatSessionsStorageKey, JSON.stringify(chatSessionState.sessions));
-    localStorage.setItem(activeChatSessionStorageKey, chatSessionState.activeId);
-  }, [chatSessionState]);
+    void hydrateChatSessions();
+  }, []);
 
   const hermes = runtimes.find((runtime) => runtime.kind === "hermes");
   const openclaw = runtimes.find((runtime) => runtime.kind === "openclaw");
@@ -735,7 +751,7 @@ export function App() {
 
   useEffect(() => {
     if (!activeChatSession) return;
-    const runId = findRunMissingTerminalEvent(activeChatSession.events);
+    const runId = findRunMissingTerminalEvent(activeChatSession.events, isRecoverableRunProgressEvent);
     if (!runId || recoveringRunIdsRef.current.has(runId)) return;
     recoveringRunIdsRef.current.add(runId);
     void getHermesRunStatus(runId)
@@ -1136,6 +1152,34 @@ export function App() {
     setActiveView("chat");
   }
 
+  async function hydrateChatSessions(): Promise<void> {
+    try {
+      const serverState = normalizeChatSessionState(await getChatSessions());
+      if (serverState.sessions.length) {
+        setChatSessionState(serverState);
+        return;
+      }
+
+      const legacyState = loadChatSessionState();
+      if (legacyState.sessions.some((session) => session.events.length > 0)) {
+        const imported = normalizeChatSessionState(await importChatSessions(legacyState));
+        if (imported.sessions.length) {
+          localStorage.removeItem(chatSessionsStorageKey);
+          localStorage.removeItem(activeChatSessionStorageKey);
+          setChatSessionState(imported);
+          return;
+        }
+      }
+
+      const next = createChatSession(selectedSocialAgent?.id ?? socialCronAgentId);
+      setChatSessionState({ sessions: [next], activeId: next.id });
+      const created = normalizeChatSessionState(await createChatSessionApi(next));
+      if (created.sessions.length) setChatSessionState(created);
+    } catch (error) {
+      setChatComposerNotice(error instanceof Error ? error.message : "chat_sessions_unavailable");
+    }
+  }
+
   async function toggleHermesSkill(skill: HermesSkillInfo) {
     const agentId = selectedSocialAgent?.id;
     if (!agentId) return;
@@ -1281,12 +1325,14 @@ export function App() {
         touched = true;
         const events = typeof update === "function" ? update(session.events) : update;
         const shouldNameSession = titleHint && (!session.title.trim() || session.title === chatDefaultSessionTitle);
-        return {
+        const updatedSession = {
           ...session,
           events,
           title: shouldNameSession ? titleHint : session.title,
           updatedAt: now
         };
+        queueMicrotask(() => void saveChatSession(updatedSession));
+        return updatedSession;
       });
       if (!touched) return current;
       return { ...current, sessions: sortChatSessions(sessions).slice(0, chatSessionLimit) };
@@ -1305,6 +1351,9 @@ export function App() {
     setChatAttachments([]);
     setChatComposerNotice(null);
     setChatComposerMode(null);
+    void createChatSessionApi(next)
+      .then((state) => setChatSessionState(normalizeChatSessionState(state)))
+      .catch((error) => setChatComposerNotice(error instanceof Error ? error.message : "create_chat_session_failed"));
   }
 
   function selectChatSession(sessionId: string) {
@@ -1312,6 +1361,7 @@ export function App() {
     const next = chatSessionState.sessions.find((session) => session.id === sessionId);
     if (!next) return;
     setChatSessionState((current) => ({ ...current, activeId: sessionId }));
+    void activateChatSessionApi(sessionId).catch(() => undefined);
     if (next.agentId) setSocialCronAgentId(next.agentId);
     setChatDraft("");
     setChatAttachments([]);
@@ -1322,15 +1372,16 @@ export function App() {
   function renameChatSession(sessionId: string, title: string) {
     setChatSessionState((current) => ({
       ...current,
-      sessions: current.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              title: title.slice(0, 80),
-              updatedAt: Date.now()
-            }
-          : session
-      )
+      sessions: current.sessions.map((session) => {
+        if (session.id !== sessionId) return session;
+        const updatedSession = {
+          ...session,
+          title: title.slice(0, 80),
+          updatedAt: Date.now()
+        };
+        queueMicrotask(() => void saveChatSession(updatedSession));
+        return updatedSession;
+      })
     }));
   }
 
@@ -1345,6 +1396,9 @@ export function App() {
         sessions
       };
     });
+    void deleteChatSessionApi(sessionId)
+      .then((state) => setChatSessionState(normalizeChatSessionState(state)))
+      .catch((error) => setChatComposerNotice(error instanceof Error ? error.message : "delete_chat_session_failed"));
     if (deletingActive) {
       setChatDraft("");
       setChatAttachments([]);
@@ -1358,21 +1412,45 @@ export function App() {
     if (!activeChatSession) return;
     setChatSessionState((current) => ({
       ...current,
-      sessions: current.sessions.map((session) =>
-        session.id === activeChatSession.id
-          ? {
-              ...session,
-              agentId,
-              updatedAt: Date.now()
-            }
-          : session
-      )
+      sessions: current.sessions.map((session) => {
+        if (session.id !== activeChatSession.id) return session;
+        const updatedSession = {
+          ...session,
+          agentId,
+          updatedAt: Date.now()
+        };
+        queueMicrotask(() => void saveChatSession(updatedSession));
+        return updatedSession;
+      })
     }));
+  }
+
+  function handoffChatSessionFromUi() {
+    if (activeChatRunId || !activeChatSession) return;
+    void handoffChatSessionApi(activeChatSession.id, selectedSocialAgent?.id ?? socialCronAgentId)
+      .then((state) => {
+        setChatSessionState(normalizeChatSessionState(state));
+        setChatDraft("");
+        setChatAttachments([]);
+        setChatComposerNotice(null);
+        setChatComposerMode(null);
+      })
+      .catch((error) => setChatComposerNotice(error instanceof Error ? error.message : "handoff_chat_session_failed"));
   }
 
   async function sendChatMessage() {
     const message = chatDraft.trim();
     if ((!message && !chatAttachments.length) || activeChatRunId || !activeChatSession) return;
+    const command = message.toLowerCase();
+    if (!chatAttachments.length && command === "/new") {
+      createChatSessionFromUi();
+      return;
+    }
+    if (!chatAttachments.length && (command === "/handoff" || command === "/compact")) {
+      setChatDraft("");
+      handoffChatSessionFromUi();
+      return;
+    }
     const agentId = selectedSocialAgent?.id ?? socialCronAgentId;
     const runComposerMode = chatComposerMode;
     const skillMentions = resolveSkillMentions(message, hermesSkills);
@@ -1401,7 +1479,12 @@ export function App() {
       clientSessionId,
       (current) => [
         ...current,
-        { event: "message.user", message: visibleUserMessage, timestamp: Date.now() / 1000 }
+        {
+          event: "message.user",
+          message: visibleUserMessage,
+          agentMessage: outgoingMessage !== visibleUserMessage ? outgoingMessage : undefined,
+          timestamp: Date.now() / 1000
+        }
       ],
       deriveChatSessionTitle(visibleUserMessage)
     );
@@ -1447,7 +1530,12 @@ export function App() {
         if (activeView === "knowledge") void reloadVaultArtifacts(selectedVaultArtifact?.artifact.path);
       };
       let statusPollError: unknown;
-      const statusPoll = waitForHermesRunTerminal(run.runId, controller.signal)
+      let eventStreamError: unknown;
+      const statusPoll = waitForHermesRunTerminal(run.runId, controller.signal, (next) => {
+        updateChatSessionEvents(clientSessionId, (current) =>
+          current.some((event) => event.run_id === next.run_id && isStatusPollTimeoutEvent(event)) ? current : [...current, next]
+        );
+      })
         .then(async (terminalEvent) => {
           if (terminalEvent) await finishWithTerminalEvent(terminalEvent);
         })
@@ -1467,11 +1555,11 @@ export function App() {
         }
       }).catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError" && receivedTerminalEvent) return;
-        throw error;
+        eventStreamError = error;
       });
       if (!receivedTerminalEvent && !controller.signal.aborted) {
         await statusPoll;
-        if (statusPollError) throw statusPollError;
+        if (!receivedTerminalEvent) throw statusPollError ?? eventStreamError;
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -1647,6 +1735,7 @@ export function App() {
                 artifacts={visibleVaultArtifacts}
                 expandedDirectories={expandedVaultDirectories}
                 onDeleteSession={deleteChatSession}
+                onHandoffChat={handoffChatSessionFromUi}
                 onNewChat={resetChat}
                 onOpenArtifact={(artifact) => void openVaultArtifact(artifact)}
                 onReferenceCurrent={() => referenceVaultArtifact()}
@@ -1713,6 +1802,7 @@ export function App() {
                 activeSession={activeChatSession}
                 agents={socialAgents}
                 onDeleteSession={deleteChatSession}
+                onHandoffChat={handoffChatSessionFromUi}
                 onNewChat={resetChat}
                 onSelectAgent={updateChatSessionAgent}
                 onSelectSession={selectChatSession}
@@ -2108,6 +2198,7 @@ function KnowledgeSubNav({
   artifacts,
   expandedDirectories,
   onDeleteSession,
+  onHandoffChat,
   onNewChat,
   onOpenArtifact,
   onReferenceCurrent,
@@ -2126,6 +2217,7 @@ function KnowledgeSubNav({
   artifacts: ArtifactTreeRow[];
   expandedDirectories: Set<string>;
   onDeleteSession: (sessionId: string) => void;
+  onHandoffChat: () => void;
   onNewChat: () => void;
   onOpenArtifact: (artifact: ArtifactInfo) => void;
   onReferenceCurrent: () => void;
@@ -2179,6 +2271,7 @@ function KnowledgeSubNav({
           activeSession={activeSession}
           agents={agents}
           onDeleteSession={onDeleteSession}
+          onHandoffChat={onHandoffChat}
           onNewChat={onNewChat}
           onSelectAgent={onSelectAgent}
           onSelectSession={onSelectSession}
@@ -2517,6 +2610,7 @@ function ChatSubNav({
   activeSession,
   agents,
   onDeleteSession,
+  onHandoffChat,
   onNewChat,
   onSelectAgent,
   onSelectSession,
@@ -2527,6 +2621,7 @@ function ChatSubNav({
   activeSession?: ChatSession;
   agents: SocialAgent[];
   onDeleteSession: (sessionId: string) => void;
+  onHandoffChat: () => void;
   onNewChat: () => void;
   onSelectAgent: (agentId: string) => void;
   onSelectSession: (sessionId: string) => void;
@@ -2541,6 +2636,7 @@ function ChatSubNav({
         activeSession={activeSession}
         agents={agents}
         onDeleteSession={onDeleteSession}
+        onHandoffChat={onHandoffChat}
         onNewChat={onNewChat}
         onSelectAgent={onSelectAgent}
         onSelectSession={onSelectSession}
@@ -2556,6 +2652,7 @@ function ChatSessionsPanel({
   activeSession,
   agents,
   onDeleteSession,
+  onHandoffChat,
   onNewChat,
   onSelectAgent,
   onSelectSession,
@@ -2566,6 +2663,7 @@ function ChatSessionsPanel({
   activeSession?: ChatSession;
   agents: SocialAgent[];
   onDeleteSession: (sessionId: string) => void;
+  onHandoffChat: () => void;
   onNewChat: () => void;
   onSelectAgent: (agentId: string) => void;
   onSelectSession: (sessionId: string) => void;
@@ -2578,6 +2676,16 @@ function ChatSessionsPanel({
       <Button className="w-full justify-start" disabled={Boolean(activeRunId)} onClick={onNewChat} type="button" variant="outline">
         <Plus className="size-3.5" />
         {t("common.newSession")}
+      </Button>
+      <Button
+        className="w-full justify-start"
+        disabled={Boolean(activeRunId) || !activeSession || countChatSessionMessages(activeSession) === 0}
+        onClick={onHandoffChat}
+        type="button"
+        variant="outline"
+      >
+        <Copy className="size-3.5" />
+        {t("chat.handoff")}
       </Button>
 
       {agents.length > 1 ? (
@@ -4049,8 +4157,9 @@ function ChatConnectionStatus({ className, status }: { className?: string; statu
 
 interface ChatTranscriptItemModel {
   id: string;
-  kind: "user" | "assistant" | "tool" | "system" | "approval";
+  kind: "user" | "assistant" | "tool" | "system" | "notice" | "approval";
   text: string;
+  agentText?: string;
   runId?: string;
   tool?: string;
   label?: string;
@@ -4186,7 +4295,12 @@ function buildChatTranscript(events: HermesChatEvent[], t?: TFunction): ChatTran
 
     if (name === "message.user") {
       closeAssistant();
-      items.push({ id: `user-${index}`, kind: "user", text: String(event.message ?? "") });
+      items.push({
+        id: `user-${index}`,
+        kind: "user",
+        text: String(event.message ?? ""),
+        agentText: typeof event.agentMessage === "string" ? event.agentMessage : undefined
+      });
       continue;
     }
 
@@ -4254,6 +4368,16 @@ function buildChatTranscript(events: HermesChatEvent[], t?: TFunction): ChatTran
         items.push({ id: `assistant-final-${index}`, kind: "assistant", text: finalOutput });
       }
       closeAssistant();
+      continue;
+    }
+
+    if (isStatusPollTimeoutEvent(event)) {
+      closeAssistant();
+      items.push({
+        id: `notice-${index}`,
+        kind: "notice",
+        text: String(event.error ?? "Hermes run is still running; waiting for final status.")
+      });
       continue;
     }
 
@@ -4959,6 +5083,42 @@ function loadChatSessionState(): ChatSessionState {
   return { sessions: [session], activeId: session.id };
 }
 
+function normalizeChatSessionState(value: unknown): ChatSessionState {
+  const payload = isRecord(value) ? value : {};
+  const rawSessions = Array.isArray(payload.sessions)
+    ? payload.sessions
+    : payload.session === undefined
+      ? []
+      : [payload.session];
+  const sessions = sortChatSessions(rawSessions.map(normalizeStoredChatSession).filter((session): session is ChatSession => Boolean(session))).slice(
+    0,
+    chatSessionLimit
+  );
+  const activeId = typeof payload.activeId === "string" && sessions.some((session) => session.id === payload.activeId) ? payload.activeId : sessions[0]?.id;
+  return { sessions, activeId: activeId ?? "" };
+}
+
+function saveChatSession(session: ChatSession): Promise<void> {
+  const nextVersion = (chatSessionSaveVersions.get(session.id) ?? 0) + 1;
+  chatSessionSaveVersions.set(session.id, nextVersion);
+  const previous = chatSessionSaveQueues.get(session.id) ?? Promise.resolve();
+  const queued = previous
+    .catch(() => undefined)
+    .then(async () => {
+      if (chatSessionSaveVersions.get(session.id) !== nextVersion) return;
+      await updateChatSessionApi(session);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (chatSessionSaveQueues.get(session.id) === queued) {
+        chatSessionSaveQueues.delete(session.id);
+        chatSessionSaveVersions.delete(session.id);
+      }
+    });
+  chatSessionSaveQueues.set(session.id, queued);
+  return queued;
+}
+
 function readStoredChatSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(chatSessionsStorageKey);
@@ -4991,6 +5151,9 @@ function normalizeStoredChatSession(value: unknown): ChatSession | null {
     createdAt,
     updatedAt,
     agentId: typeof value.agentId === "string" && value.agentId.trim() ? value.agentId : undefined,
+    parentSessionId: typeof value.parentSessionId === "string" && value.parentSessionId.trim() ? value.parentSessionId : undefined,
+    hermesSessionId: typeof value.hermesSessionId === "string" && value.hermesSessionId.trim() ? value.hermesSessionId : undefined,
+    handoffSummary: typeof value.handoffSummary === "string" && value.handoffSummary.trim() ? value.handoffSummary : undefined,
     events
   };
 }
@@ -5282,6 +5445,57 @@ async function getHermesChatStatus(): Promise<HermesChatStatus> {
   }
 }
 
+async function getChatSessions(): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>("/api/chat/sessions");
+}
+
+async function createChatSessionApi(session: ChatSession): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>("/api/chat/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(session)
+  });
+}
+
+async function importChatSessions(state: ChatSessionState): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>("/api/chat/sessions/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state)
+  });
+}
+
+async function updateChatSessionApi(session: ChatSession): Promise<ChatSessionResponse> {
+  return await api<ChatSessionResponse>(`/api/chat/sessions/${encodeURIComponent(session.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: session.title,
+      agentId: session.agentId,
+      parentSessionId: session.parentSessionId,
+      hermesSessionId: session.hermesSessionId,
+      handoffSummary: session.handoffSummary,
+      events: session.events
+    })
+  });
+}
+
+async function activateChatSessionApi(sessionId: string): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/activate`, { method: "POST" });
+}
+
+async function handoffChatSessionApi(sessionId: string, agentId: string): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/handoff`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId })
+  });
+}
+
+async function deleteChatSessionApi(sessionId: string): Promise<ChatSessionsResponse> {
+  return await api<ChatSessionsResponse>(`/api/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
 async function createHermesChatRun(
   input: string | HermesChatMessage[],
   sessionId: string,
@@ -5331,22 +5545,27 @@ async function consumeHermesRunEvents(runId: string, signal: AbortSignal, onEven
   if (event) onEvent(event);
 }
 
-async function waitForHermesRunTerminal(runId: string, signal: AbortSignal): Promise<HermesChatEvent | null> {
+async function waitForHermesRunTerminal(
+  runId: string,
+  signal: AbortSignal,
+  onStatusEvent?: (event: HermesChatEvent) => void
+): Promise<HermesChatEvent | null> {
   const deadline = Date.now() + 480000;
-  let lastStatus: HermesChatRunStatus | null = null;
-  while (!signal.aborted && Date.now() < deadline) {
-    lastStatus = await getHermesRunStatus(runId);
+  let timeoutReported = false;
+  while (!signal.aborted) {
+    const lastStatus = await getHermesRunStatus(runId);
     const event = runStatusToTerminalEvent(lastStatus);
     if (event) return event;
+    if (!timeoutReported && Date.now() >= deadline && lastStatus.status === "running") {
+      timeoutReported = true;
+      onStatusEvent?.({
+        event: "run.status_poll_timeout",
+        run_id: runId,
+        timestamp: Date.now() / 1000,
+        error: `run_status_poll_timeout:last_event=${lastStatus.lastEvent ?? "unknown"}`
+      });
+    }
     await sleep(3000, signal);
-  }
-  if (!signal.aborted && lastStatus?.status === "running") {
-    return {
-      event: "run.failed",
-      run_id: runId,
-      timestamp: Date.now() / 1000,
-      error: `run_status_poll_timeout:last_event=${lastStatus.lastEvent ?? "unknown"}`
-    };
   }
   return null;
 }
@@ -5412,12 +5631,7 @@ function parseHermesSseEvent(raw: string): HermesChatEvent | null {
 }
 
 function buildHermesChatInput(events: HermesChatEvent[], nextUserMessage: string): HermesChatMessage[] {
-  const prior = buildChatTranscript(events)
-    .filter((item): item is ChatTranscriptItemModel & { kind: "user" | "assistant" } => item.kind === "user" || item.kind === "assistant")
-    .map((item) => ({ role: item.kind, content: item.text.trim() }))
-    .filter((item) => item.content)
-    .slice(-16);
-  return [...prior, { role: "user", content: nextUserMessage }];
+  return buildHermesChatInputFromTranscript(buildChatTranscript(events), nextUserMessage);
 }
 
 function runStatusToTerminalEvent(status: HermesChatRunStatus): HermesChatEvent | null {
@@ -5459,25 +5673,8 @@ function hermesLlmFromValue(value: string): HermesLlmSelection | undefined {
   return { provider, model };
 }
 
-function isTerminalRunEvent(event: HermesChatEvent): boolean {
-  const name = event.event || event.type || "";
-  return name === "run.completed" || name === "run.failed" || name === "run.cancelled" || name === "response.completed" || name === "response.failed";
-}
-
-function hasTerminalEventForRun(events: HermesChatEvent[], runId: string): boolean {
-  return events.some((event) => event.run_id === runId && isTerminalRunEvent(event));
-}
-
-function findRunMissingTerminalEvent(events: HermesChatEvent[]): string | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const runId = events[index].run_id;
-    if (!runId) continue;
-    if (hasTerminalEventForRun(events, runId)) return undefined;
-    if (events.some((event) => event.run_id === runId && (isRuntimeEvent(event) || isToolStartedEvent(event) || isToolCompletedEvent(event)))) {
-      return runId;
-    }
-  }
-  return undefined;
+function isRecoverableRunProgressEvent(event: HermesChatEvent): boolean {
+  return isRuntimeEvent(event) || isToolStartedEvent(event) || isToolCompletedEvent(event) || isStatusPollTimeoutEvent(event);
 }
 
 async function hermesErrorMessage(response: Response): Promise<string> {

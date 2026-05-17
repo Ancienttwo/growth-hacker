@@ -4,6 +4,15 @@ import { fileURLToPath } from "node:url";
 
 import { Hono } from "hono";
 
+import {
+  activateChatSession,
+  createChatSession,
+  deleteChatSession,
+  handoffChatSession,
+  importChatSessions,
+  listChatSessions,
+  updateChatSession
+} from "./chatSessions";
 import { loadConfig } from "./config";
 import { persistHermesGeneratedImageArtifacts, resolveHermesGeneratedImage } from "./hermesImages";
 import { listHermesModelOptions, resolveHermesLlmSelection } from "./hermesModels";
@@ -96,6 +105,62 @@ export function createApp() {
   app.post("/api/bootstrap/growth-agent", async (c) => c.json(await bootstrapGrowthAgent(config)));
 
   app.get("/api/chat/hermes/status", async (c) => c.json(await getHermesChatStatus(config)));
+
+  app.get("/api/chat/sessions", (c) => {
+    try {
+      return c.json(listChatSessions(config));
+    } catch (error) {
+      return chatErrorResponse(error, "list_chat_sessions_failed");
+    }
+  });
+
+  app.post("/api/chat/sessions", async (c) => {
+    try {
+      return c.json(createChatSession(config, await c.req.json().catch(() => ({}))), 201);
+    } catch (error) {
+      return chatErrorResponse(error, "create_chat_session_failed");
+    }
+  });
+
+  app.post("/api/chat/sessions/import", async (c) => {
+    try {
+      return c.json(importChatSessions(config, await c.req.json().catch(() => ({}))));
+    } catch (error) {
+      return chatErrorResponse(error, "import_chat_sessions_failed");
+    }
+  });
+
+  app.patch("/api/chat/sessions/:id", async (c) => {
+    try {
+      return c.json({ session: updateChatSession(config, c.req.param("id"), await c.req.json().catch(() => ({}))) });
+    } catch (error) {
+      return chatErrorResponse(error, "update_chat_session_failed");
+    }
+  });
+
+  app.post("/api/chat/sessions/:id/activate", (c) => {
+    try {
+      return c.json(activateChatSession(config, c.req.param("id")));
+    } catch (error) {
+      return chatErrorResponse(error, "activate_chat_session_failed");
+    }
+  });
+
+  app.post("/api/chat/sessions/:id/handoff", async (c) => {
+    try {
+      return c.json(handoffChatSession(config, c.req.param("id"), await c.req.json().catch(() => ({}))), 201);
+    } catch (error) {
+      return chatErrorResponse(error, "handoff_chat_session_failed");
+    }
+  });
+
+  app.delete("/api/chat/sessions/:id", (c) => {
+    try {
+      return c.json(deleteChatSession(config, c.req.param("id")));
+    } catch (error) {
+      return chatErrorResponse(error, "delete_chat_session_failed");
+    }
+  });
 
   app.get("/api/hermes/models", async (c) => {
     try {
