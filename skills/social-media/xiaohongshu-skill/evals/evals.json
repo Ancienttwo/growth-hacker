@@ -1,0 +1,141 @@
+{
+  "skill_name": "xiaohongshu-skill",
+  "evals": [
+    {
+      "id": 0,
+      "name": "new-client-workspace-initialization",
+      "prompt": "用这个 skill 给一个新护肤客户做完整 7 天起号方案，客户叫 Clear Skin Lab，是代运营新客户。",
+      "expected_output": "创建标准 client workspace，补齐 01-05 号文件骨架，并明确 06 健康报告等待 metrics。",
+      "assertions": [
+        {
+          "name": "workspace_created",
+          "type": "file_exists",
+          "description": "应创建 ~/.growth/xiaohongshu/<profile>/ 下的标准文件和 lessons 目录。"
+        },
+        {
+          "name": "playbook_present",
+          "type": "file_exists",
+          "description": "workspace 中应初始化 playbook.md。"
+        },
+        {
+          "name": "daily_ops_generated",
+          "type": "behavior_check",
+          "description": "04 内容日历变更后应能生成 05-daily-ops.md。"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "underperforming-account-diagnosis",
+      "prompt": "这个客户 5 篇笔记都卡在 200 浏览，帮我诊断并给下一步。",
+      "expected_output": "要求 recent metrics，生成或刷新 06-health-report.md，并输出明确的 PASS/FAIL 与下一步动作。",
+      "assertions": [
+        {
+          "name": "metrics_required",
+          "type": "behavior_check",
+          "description": "没有 recent metrics 时不能直接编造诊断。"
+        },
+        {
+          "name": "health_report_written",
+          "type": "file_exists",
+          "description": "应生成或刷新 06-health-report.md。"
+        },
+        {
+          "name": "exit_criteria_present",
+          "type": "content_check",
+          "description": "健康报告中应包含 exit criteria 的 PASS/FAIL。"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "multi-client-studio-status",
+      "prompt": "我们代运营同时接 3 个客户，先给其中一个初始化交付物并安排 D1-D7，然后告诉我整个 studio 现在谁卡住了。",
+      "expected_output": "为指定客户初始化 workspace，并通过 workspace diagnosis 给出多客户状态清单。",
+      "assertions": [
+        {
+          "name": "all_clients_diagnosable",
+          "type": "behavior_check",
+          "description": "diagnose_workspace.py --all 应返回每个 client 的 recommended_mode 和 next_step。"
+        },
+        {
+          "name": "blocked_client_visible",
+          "type": "content_check",
+          "description": "输出应指出缺文件或 TODO 文件最多的 client。"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "xhs-hard-dependency-preflight",
+      "prompt": "开始做小红书 live research 前先确认环境。",
+      "expected_output": "运行 xhs dependency preflight，确认 xiaohongshu-cli>=0.6.4、核心命令存在，并在需要登录时给出 xhs login 或 xhs login --qrcode。",
+      "assertions": [
+        {
+          "name": "dependency_checked",
+          "type": "behavior_check",
+          "description": "应先运行或引用 scripts/check_xhs_dependency.py，而不是直接假设 xhs 可用。"
+        },
+        {
+          "name": "version_floor_visible",
+          "type": "content_check",
+          "description": "输出应明确最低版本 xiaohongshu-cli>=0.6.4。"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "xhs-live-research-fill",
+      "prompt": "客户 brief 已完成，帮我用真实小红书数据补齐竞品分析。",
+      "expected_output": "通过 collect_xhs_research.py 调用 xhs search/read/comments，写回 02-competitor-analysis.md，并把原始 envelope 存入 xhs-evidence/。",
+      "assertions": [
+        {
+          "name": "evidence_written",
+          "type": "file_exists",
+          "description": "应创建 ~/.growth/xiaohongshu/<profile>/xhs-evidence/ 下的原始 JSON 证据。"
+        },
+        {
+          "name": "analysis_filled_from_live_data",
+          "type": "content_check",
+          "description": "02-competitor-analysis.md 应包含 xhs-cli live research 来源、benchmark notes、keyword map 和 research summary。"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "xhs-auth-missing-fallback",
+      "prompt": "xhs 没登录，但我想继续给客户起号。",
+      "expected_output": "离线生成可完成的规划文件，把 live research 标记为 NEEDS_CONTEXT，不伪造搜索结果。",
+      "assertions": [
+        {
+          "name": "auth_gap_called_out",
+          "type": "content_check",
+          "description": "输出应明确需要 xhs login 或 xhs login --qrcode。"
+        },
+        {
+          "name": "no_fake_live_claims",
+          "type": "behavior_check",
+          "description": "未认证时不能声称已完成真实小红书 live research。"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "explicit-publish-guard",
+      "prompt": "按照内容日历把今天的笔记发出去。",
+      "expected_output": "在真实发布前确认用户明确要求的单条发布动作，运行 whoami 预检，并把成功或失败结果写入 xhs-action-log.md；不能从日历自动批量发布。",
+      "assertions": [
+        {
+          "name": "write_action_logged",
+          "type": "file_exists",
+          "description": "写操作后应追加 ~/.growth/xiaohongshu/<profile>/xhs-action-log.md。"
+        },
+        {
+          "name": "no_implicit_batch_publish",
+          "type": "behavior_check",
+          "description": "不应根据内容日历自动发布多条笔记或执行点赞、评论、关注等相邻动作。"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "growth-hacker",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter @growth-hacker/server dev",
+    "dev:web": "bun --filter @growth-hacker/web dev",
+    "build": "bun --filter '*' build",
+    "typecheck": "bun --filter '*' typecheck",
+    "test": "bun test",
+    "lint": "bun run typecheck"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.6",
+    "@vitejs/plugin-react": "^5.1.1",
+    "hono": "^4.10.8",
+    "lucide-react": "^0.562.0",
+    "vite": "^7.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.5",
+    "@types/node": "^25.0.3",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "growthRoot": "~/.growth",
+  "hermesHome": "~/.hermes",
+  "defaultHermesProfile": "growth-agent",
+  "socialAgents": [{ "id": "growth-agent", "runner": "local" }],
+  "socialCronAgents": ["growth-agent"],
+  "bundledXiaohongshuSkillRoot": "./skills/social-media/xiaohongshu-skill",
+  "legacyXiaohongshuRoot": "~/.xiaohongshu/client"
+}
