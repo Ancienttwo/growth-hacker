@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import type { AppConfig } from "../src/config";
-import { listXhsPublishedPosts, updateXhsPublishedPost, upsertXhsPublishedPostItems } from "../src/xhsPublished";
+import { listXhsPublishedPosts, toPublicXhsPublishedPost, updateXhsPublishedPost, upsertXhsPublishedPostItems } from "../src/xhsPublished";
 
 function config(): AppConfig {
   const root = mkdtempSync(join(tmpdir(), "growth-hacker-xhs-published-"));
@@ -24,9 +24,10 @@ function config(): AppConfig {
 }
 
 function createProfile(appConfig: AppConfig, profile = "astrozi"): string {
-  const path = join(appConfig.growthRoot, profile, "xiaohongshu");
-  mkdirSync(path, { recursive: true });
-  return path;
+  mkdirSync(join(appConfig.growthRoot, profile, "xiaohongshu"), { recursive: true });
+  const documentPath = join(appConfig.growthRoot, "vault", profile, "xiaohongshu");
+  mkdirSync(documentPath, { recursive: true });
+  return documentPath;
 }
 
 describe("XHS published posts", () => {
@@ -59,6 +60,8 @@ describe("XHS published posts", () => {
     const first = upsertXhsPublishedPostItems(appConfig, "astrozi", [
       {
         id: "note-1",
+        xsec_token: "xsec-1",
+        xsec_source: "pc_creatormng",
         share_url: "https://www.xiaohongshu.com/explore/note-1",
         note_card: {
           display_title: "香港入境处请人啦！每月顶薪3w+港币",
@@ -76,8 +79,11 @@ describe("XHS published posts", () => {
       id: "note-1",
       authorName: "搵工小野猪",
       coverUrl: "https://cdn.example/cover.jpg",
-      stats: { likes: 12000, collects: 330, comments: 44 }
+      stats: { likes: 12000, collects: 330, comments: 44 },
+      xsecToken: "xsec-1",
+      xsecSource: "pc_creatormng"
     });
+    expect(toPublicXhsPublishedPost(first.posts[0])).not.toHaveProperty("xsecToken");
 
     updateXhsPublishedPost(appConfig, "astrozi", "note-1", { status: "needs-review", statusNote: "封面可复盘" });
     const second = upsertXhsPublishedPostItems(appConfig, "astrozi", [

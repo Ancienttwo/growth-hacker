@@ -19,8 +19,8 @@ import type { AppConfig } from "./config";
 import { createHermesChatRun, getHermesRun } from "./hermesChat";
 import { runHermesProviderPrompt } from "./hermesModels";
 import { commandExists, redact, runCommand } from "./shell";
-import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli } from "./xhsPublished";
-import { assertSafeSegment, profileRoot, safeStat } from "./workspace";
+import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, type StoredXhsPublishedPost } from "./xhsPublished";
+import { assertSafeSegment, profileRoot, safeStat, xhsDocumentRoot } from "./workspace";
 
 const XHS_AUTO_REPLY_QUEUE_SCHEMA_VERSION = 1;
 const XHS_AUTO_REPLY_SETTINGS_SCHEMA_VERSION = 1;
@@ -375,11 +375,13 @@ async function fetchCurrentXhsUser(xhs: string): Promise<CurrentXhsUser> {
 
 async function fetchCommentsForPost(
   xhs: string,
-  post: XhsPublishedPost
+  post: StoredXhsPublishedPost
 ): Promise<{ ok: true; comments: Array<Record<string, unknown>> } | { ok: false; error: string }> {
   const ref = post.url || post.id;
   if (!ref) return { ok: false, error: "missing_note_reference" };
-  const result = await runCommand(xhs, ["comments", ref, "--all", "--json"], { timeoutMs: 120000, redactOutput: false });
+  const args = ["comments", ref, "--all", "--json"];
+  if (post.xsecToken) args.splice(2, 0, "--xsec-token", post.xsecToken);
+  const result = await runCommand(xhs, args, { timeoutMs: 120000, redactOutput: false });
   if (result.exitCode !== 0) return { ok: false, error: redact(result.stderr || result.stdout || result.error || "xhs_comments_failed") };
   try {
     const data = parseEnvelope(result.stdout, "xhs_comments").data;
@@ -525,7 +527,7 @@ function appendActionLog(
     decisionReason: entry.item.decisionReason,
     result: entry.result
   };
-  appendFileSync(join(assertProfileExists(config, profile), "xhs-action-log.md"), `${JSON.stringify(payload)}\n`, { mode: 0o600 });
+  appendFileSync(join(xhsActionLogRoot(config, profile), "xhs-action-log.md"), `${JSON.stringify(payload)}\n`, { mode: 0o600 });
 }
 
 function assertProfileExists(config: AppConfig, profile: string): string {
@@ -533,6 +535,12 @@ function assertProfileExists(config: AppConfig, profile: string): string {
   const root = profileRoot(config, XIAOHONGSHU_PLATFORM, profile);
   if (!safeStat(root)?.isDirectory()) throw new Error(`profile_not_found:${XIAOHONGSHU_PLATFORM}/${profile}`);
   return root;
+}
+
+function xhsActionLogRoot(config: AppConfig, profile: string): string {
+  const profilePath = assertProfileExists(config, profile);
+  const documentRoot = xhsDocumentRoot(config, profile);
+  return safeStat(documentRoot)?.isDirectory() ? documentRoot : profilePath;
 }
 
 function queuePath(config: AppConfig, profile: string): string {

@@ -1,12 +1,14 @@
 export const WORKSPACE_SCHEMA_VERSION = 1;
 export const DEFAULT_GROWTH_AGENT = "growth-agent";
 export const XIAOHONGSHU_PLATFORM = "xiaohongshu";
+export const VAULT_WORKSPACE_PLATFORM = "vault";
+export const VAULT_WORKSPACE_PROFILE = "vault";
 
 export type RuntimeKind = "hermes" | "openclaw";
 export type RuntimeState = "available" | "missing" | "degraded";
 export type PlatformId = typeof XIAOHONGSHU_PLATFORM | "youtube" | "facebook" | "x" | "instagram";
 
-export const WORKSPACE_PLATFORMS: PlatformId[] = [XIAOHONGSHU_PLATFORM, "x", "facebook"];
+export const WORKSPACE_PLATFORMS: PlatformId[] = [XIAOHONGSHU_PLATFORM, "x", "facebook", "youtube"];
 
 export interface RuntimeStatus {
   kind: RuntimeKind;
@@ -111,11 +113,38 @@ export interface JobSnapshot {
 }
 
 export type AgentRunnerKind = RuntimeKind | "local";
-export type SocialCronTaskType = "workspace-diagnosis" | "daily-ops-refresh" | "health-report" | "auto-reply";
+export type SocialCronTaskType = "workspace-diagnosis" | "daily-ops-refresh" | "health-report" | "auto-reply" | "topic-harvest";
+export type SocialCronSource = "growth" | "hermes";
 export type SocialBoardTaskStatus = "todo" | "ready" | "running" | "blocked" | "done" | "failed" | "archived";
 export type XhsPublishedPostStatus = "published" | "monitoring" | "needs-review" | "archived";
 export type XhsAutoReplyItemStatus = "pending" | "drafted" | "sent" | "skipped" | "needs-review" | "failed" | "already-replied";
 export type XhsAutoReplyLocale = "zh-CN" | "zh-HK" | "zh-TW" | "en" | "zh-SG-MY";
+export type SocialPlatformCliState = "available" | "missing" | "not-configured" | "degraded";
+
+export interface SocialPlatformCapabilities {
+  workspace: boolean;
+  publishedPosts: boolean;
+  comments: boolean;
+  autoReplies: boolean;
+  scheduledTasks: SocialCronTaskType[];
+}
+
+export interface SocialPlatformCliStatus {
+  command?: string;
+  path?: string;
+  state: SocialPlatformCliState;
+  authenticated?: boolean;
+  authState?: string;
+  message?: string;
+}
+
+export interface SocialPlatformInfo {
+  id: PlatformId;
+  label: string;
+  shortLabel: string;
+  cli: SocialPlatformCliStatus;
+  capabilities: SocialPlatformCapabilities;
+}
 
 export interface XhsPublishedPostStats {
   views?: number;
@@ -233,6 +262,86 @@ export interface HermesModelOptions {
   current?: HermesLlmSelection;
 }
 
+export interface HermesContextTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning: number;
+}
+
+export interface HermesSessionSummary {
+  id: string;
+  source: string;
+  model?: string;
+  title?: string;
+  userId?: string;
+  parentSessionId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  endReason?: string;
+  messageCount: number;
+  toolCallCount: number;
+  apiCallCount: number;
+  tokens: HermesContextTokenUsage;
+}
+
+export interface HermesToolCallSummary {
+  id?: string;
+  name: string;
+  argumentsPreview?: string;
+}
+
+export interface HermesMessageSummary {
+  id: number;
+  sessionId: string;
+  role: string;
+  contentPreview?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolCalls: HermesToolCallSummary[];
+  timestamp?: string;
+  tokenCount?: number;
+  finishReason?: string;
+}
+
+export type HermesGatewayEventKind = "inbound" | "response" | "compression" | "provider" | "lifecycle" | "log";
+
+export interface HermesGatewayEvent {
+  id: string;
+  kind: HermesGatewayEventKind;
+  level: string;
+  timestamp?: string;
+  logger?: string;
+  context?: string;
+  message: string;
+  platform?: string;
+  chat?: string;
+  user?: string;
+  fromSessionId?: string;
+  toSessionId?: string;
+  durationSeconds?: number;
+  apiCalls?: number;
+  responseChars?: number;
+}
+
+export interface HermesContextSnapshot {
+  generatedAt: string;
+  sourcePaths: {
+    stateDb: string;
+    gatewayLog: string;
+  };
+  available: {
+    stateDb: boolean;
+    gatewayLog: boolean;
+  };
+  query?: string;
+  selectedSessionId?: string;
+  sessions: HermesSessionSummary[];
+  messages: HermesMessageSummary[];
+  gatewayEvents: HermesGatewayEvent[];
+}
+
 export interface HermesSkillInfo {
   name: string;
   category: string;
@@ -267,6 +376,8 @@ export interface SocialBoardTask {
 export interface SocialTaskCalendarItem {
   id: string;
   source: "cron" | "board";
+  cronSource?: SocialCronSource;
+  readOnly?: boolean;
   title: string;
   startsAt: string;
   agentId: string;
@@ -288,6 +399,8 @@ export interface SocialCronSchedule {
 
 export interface SocialCronJob {
   id: string;
+  source?: SocialCronSource;
+  readOnly?: boolean;
   agentId: string;
   llm?: HermesLlmSelection;
   platform: string;

@@ -3,11 +3,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 
 import type { HermesLlmSelection, JobSnapshot, SocialCronJob, SocialCronSchedule, SocialCronTaskType } from "@growth-hacker/core";
-import { XIAOHONGSHU_PLATFORM } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { listHermesSocialCronJobs } from "./hermesCron";
 import type { JobStore } from "./jobs";
 import { createSocialBoardTask, listSocialAgents, runSocialBoardTask } from "./socialBoard";
+import { assertSocialTaskSupported } from "./socialPlatforms";
 import { profileRoot, safeStat } from "./workspace";
 
 const SOCIAL_CRON_SCHEMA_VERSION = 1;
@@ -15,7 +16,8 @@ const TASK_LABELS: Record<SocialCronTaskType, string> = {
   "workspace-diagnosis": "Workspace diagnosis",
   "daily-ops-refresh": "Daily ops refresh",
   "health-report": "Health report",
-  "auto-reply": "Auto replies"
+  "auto-reply": "Auto replies",
+  "topic-harvest": "Topic harvest"
 };
 
 interface SocialCronStore {
@@ -47,7 +49,7 @@ export function listSocialCronAgents(config: AppConfig): string[] {
 }
 
 export function listSocialCronJobs(config: AppConfig): SocialCronJob[] {
-  return readStore(config).jobs.sort((a, b) => {
+  return [...readStore(config).jobs, ...listHermesSocialCronJobs(config)].sort((a, b) => {
     const left = a.nextRunAt ?? a.updatedAt;
     const right = b.nextRunAt ?? b.updatedAt;
     return left.localeCompare(right);
@@ -67,6 +69,7 @@ export function createSocialCronJob(config: AppConfig, input: CreateSocialCronJo
   const schedule = parseSocialCronSchedule(input.schedule);
   const job: SocialCronJob = {
     id: `scron-${randomUUID().slice(0, 8)}`,
+    source: "growth",
     agentId,
     llm: input.llm,
     platform: input.platform,
@@ -89,6 +92,7 @@ export function createSocialCronJob(config: AppConfig, input: CreateSocialCronJo
 }
 
 export function updateSocialCronJob(config: AppConfig, id: string, input: UpdateSocialCronJobInput): SocialCronJob {
+  assertManagedSocialCronId(id);
   const store = readStore(config);
   const index = store.jobs.findIndex((job) => job.id === id);
   if (index < 0) throw new Error(`social_cron_job_not_found:${id}`);
@@ -121,6 +125,7 @@ export function updateSocialCronJob(config: AppConfig, id: string, input: Update
 }
 
 export function deleteSocialCronJob(config: AppConfig, id: string): boolean {
+  assertManagedSocialCronId(id);
   const store = readStore(config);
   const next = store.jobs.filter((job) => job.id !== id);
   if (next.length === store.jobs.length) return false;
@@ -129,7 +134,7 @@ export function deleteSocialCronJob(config: AppConfig, id: string): boolean {
 }
 
 export function runDueSocialCronJobs(config: AppConfig, jobStore: JobStore, now = new Date()): JobSnapshot[] {
-  const jobs = listSocialCronJobs(config).filter((job) => {
+  const jobs = readStore(config).jobs.filter((job) => {
     if (!job.enabled || job.state === "running" || !job.nextRunAt) return false;
     return new Date(job.nextRunAt).getTime() <= now.getTime();
   });
@@ -137,6 +142,7 @@ export function runDueSocialCronJobs(config: AppConfig, jobStore: JobStore, now 
 }
 
 export function runSocialCronJob(config: AppConfig, jobStore: JobStore, id: string): JobSnapshot {
+  assertManagedSocialCronId(id);
   const store = readStore(config);
   const index = store.jobs.findIndex((job) => job.id === id);
   if (index < 0) throw new Error(`social_cron_job_not_found:${id}`);
@@ -263,13 +269,15 @@ function assertAllowedAgent(config: AppConfig, agentId: string): void {
   }
 }
 
+function assertManagedSocialCronId(id: string): void {
+  if (id.startsWith("hermes:")) throw new Error(`social_cron_job_read_only:${id}`);
+}
+
 function assertSupportedTask(platform: string, taskType: SocialCronTaskType): void {
-  if (platform !== XIAOHONGSHU_PLATFORM) {
-    throw new Error(`platform_not_supported:${platform}`);
-  }
   if (!SOCIAL_CRON_TASK_TYPES.includes(taskType)) {
     throw new Error(`task_not_supported:${taskType}`);
   }
+  assertSocialTaskSupported(platform, taskType);
 }
 
 function defaultJobName(profile: string, taskType: SocialCronTaskType): string {
@@ -298,6 +306,8 @@ function writeStore(config: AppConfig, store: SocialCronStore): void {
 function normalizeJob(job: SocialCronJob): SocialCronJob {
   return {
     ...job,
+    source: job.source ?? "growth",
+    readOnly: false,
     llm: normalizeStoredLlm(job.llm),
     enabled: job.enabled ?? true,
     state: job.state ?? "scheduled",

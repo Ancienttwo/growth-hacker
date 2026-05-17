@@ -44,8 +44,12 @@ if (command === "--version") {
   ok({ user_id: "brand-1", nickname: "AstroZi" });
 } else if (command === "my-notes") {
   const page = Number(process.argv[process.argv.indexOf("--page") + 1] ?? "0");
-  ok(page === 0 ? { items: [{ id: "note-1", url: "https://www.xiaohongshu.com/explore/note-1", note_card: { display_title: "八字十神", interact_info: { comment_count: "1" } } }] } : { items: [] });
+  ok(page === 0 ? { items: [{ id: "note-1", xsec_token: "xsec-1", url: "https://www.xiaohongshu.com/explore/note-1", note_card: { display_title: "八字十神", interact_info: { comment_count: "1" } } }] } : { items: [] });
 } else if (command === "comments") {
+  if (!process.argv.includes("--xsec-token") || process.argv[process.argv.indexOf("--xsec-token") + 1] !== "xsec-1") {
+    console.log(JSON.stringify({ ok: false, schema_version: "1", error: { code: "missing_xsec_token" } }));
+    process.exit(1);
+  }
   ok({ comments: [{ id: "comment-1", content: "这个适合新手吗？", user_info: { user_id: "user-1", nickname: "Alice" }, sub_comment_count: 0 }] });
 } else if (command === "sub-comments") {
   ok({ comments: [] });

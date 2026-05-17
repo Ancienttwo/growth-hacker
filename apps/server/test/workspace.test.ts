@@ -1,11 +1,19 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
 import type { AppConfig } from "../src/config";
-import { artifactContentType, listArtifacts, listWorkspaces, readArtifact } from "../src/workspace";
+import {
+  artifactContentType,
+  ensureXhsWorkspaceForAuth,
+  listArtifacts,
+  listVaultArtifacts,
+  listWorkspaces,
+  readArtifact,
+  readVaultArtifact
+} from "../src/workspace";
 
 function config(): AppConfig {
   const root = mkdtempSync(join(tmpdir(), "growth-hacker-workspace-"));
@@ -68,16 +76,95 @@ describe("workspace artifact access", () => {
     expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/astrozi"]);
   });
 
+  test("lists and reads vault artifacts without exposing the vault as a platform workspace", () => {
+    const appConfig = config();
+    mkdirSync(join(appConfig.growthRoot, "vault", "10-Posts"), { recursive: true });
+    writeFileSync(join(appConfig.growthRoot, "vault", "10-Posts", "note.md"), "# Note\n");
+
+    const artifacts = listVaultArtifacts(appConfig);
+
+    expect(artifacts.map((item) => item.path)).toContain("10-Posts/note.md");
+    expect(artifacts.find((item) => item.path === "10-Posts/note.md")).toMatchObject({
+      platform: "vault",
+      profile: "vault",
+      mime: "markdown"
+    });
+    expect(readVaultArtifact(appConfig, "10-Posts/note.md").content).toBe("# Note\n");
+    expect(() => readVaultArtifact(appConfig, "../secret.md")).toThrow("Path traversal blocked");
+    expect(listWorkspaces(appConfig)).toEqual([]);
+  });
+
   test("lists profile-first multi-platform workspaces", () => {
     const appConfig = config();
     mkdirSync(join(appConfig.growthRoot, "astrozi", "xiaohongshu"), { recursive: true });
     mkdirSync(join(appConfig.growthRoot, "astrozi", "x"), { recursive: true });
     mkdirSync(join(appConfig.growthRoot, "astrozi", "facebook"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "youtube"), { recursive: true });
 
     expect(listWorkspaces(appConfig).map((profile) => `${profile.profile}/${profile.platform}`).sort()).toEqual([
       "astrozi/facebook",
       "astrozi/x",
-      "astrozi/xiaohongshu"
+      "astrozi/xiaohongshu",
+      "astrozi/youtube"
     ]);
+  });
+
+  test("repairs legacy platform-first workspaces into the canonical layout", () => {
+    const appConfig = config();
+    const legacy = join(appConfig.growthRoot, "xiaohongshu", "astrozi");
+    mkdirSync(join(legacy, "drafts"), { recursive: true });
+    writeFileSync(join(legacy, "01-client-brief.md"), "# Legacy brief\n");
+    writeFileSync(join(legacy, "drafts", "D3.md"), "# Draft\n");
+
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/astrozi"]);
+    expect(readFileSync(join(appConfig.growthRoot, "astrozi", "xiaohongshu", "01-client-brief.md"), "utf8")).toBe("# Legacy brief\n");
+    expect(readFileSync(join(legacy, "01-client-brief.md"), "utf8")).toBe("# Legacy brief\n");
+  });
+
+  test("creates a templated Xiaohongshu workspace from signed-in auth when none exists", () => {
+    const appConfig = config();
+    const templates = join(appConfig.bundledXiaohongshuSkillRoot, "assets", "templates");
+    mkdirSync(templates, { recursive: true });
+    writeFileSync(join(templates, "client-brief.md"), "Client={{CLIENT_NAME}}\nProfile={{PROFILE}}\nIndustry={{INDUSTRY}}\n");
+    writeFileSync(join(templates, "metrics-template.csv"), "date,note_title\n");
+
+    const workspace = ensureXhsWorkspaceForAuth(appConfig, {
+      installed: true,
+      authenticated: true,
+      state: "signed-in",
+      scope: "global",
+      nickname: "AstroZi 星玺",
+      redId: "94388625879"
+    });
+
+    expect(workspace).toMatchObject({ platform: "xiaohongshu", profile: "94388625879" });
+    expect(readFileSync(join(appConfig.growthRoot, "94388625879", "xiaohongshu", "xhs-account.json"), "utf8")).toContain(
+      "AstroZi 星玺"
+    );
+    expect(readFileSync(join(appConfig.growthRoot, "vault", "94388625879", "xiaohongshu", "01-client-brief.md"), "utf8")).toContain(
+      "Client=AstroZi 星玺"
+    );
+    expect(readFileSync(join(appConfig.growthRoot, "vault", "94388625879", "xiaohongshu", "metrics.csv"), "utf8")).toBe(
+      "date,note_title\n"
+    );
+    expect(listVaultArtifacts(appConfig).map((artifact) => artifact.path)).toContain("94388625879/xiaohongshu/01-client-brief.md");
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/94388625879"]);
+  });
+
+  test("does not create a duplicate auth workspace when an XHS profile already exists", () => {
+    const appConfig = config();
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "xiaohongshu"), { recursive: true });
+
+    const workspace = ensureXhsWorkspaceForAuth(appConfig, {
+      installed: true,
+      authenticated: true,
+      state: "signed-in",
+      scope: "global",
+      nickname: "Real User",
+      redId: "real_user"
+    });
+
+    expect(workspace).toBeUndefined();
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/astrozi"]);
   });
 });

@@ -4,8 +4,10 @@ Local-first dashboard for running social media growth skills through Hermes/Open
 
 ## v1
 
-- Canonical workspace root: `~/.growth/<profile>/<platform>/`
-- Xiaohongshu source path: `~/.growth/<profile>/xiaohongshu/`
+- Social account state root: `~/.growth/<profile>/<platform>/`
+- Distilled platform workspace path: `~/.growth/vault/<profile>/<platform>/`
+- Reusable platform library path: `~/.growth/vault/_library/<platform>/`
+- Shared cross-platform library path: `~/.growth/vault/_library/_shared/`
 - Global workspace content: `~/.growth/*` and `~/.growth/vault/*`
 - Legacy import source: `~/.xiaohongshu/client/<profile>/`
 - Default agent profile: `growth-agent`
@@ -31,6 +33,10 @@ hermes gateway restart
 ```
 
 Override the gateway target with `HERMES_API_BASE_URL` or `hermesApiBaseUrl` in `growth-hacker.config.json` if Hermes is not on `http://127.0.0.1:8642`. If the gateway uses `API_SERVER_KEY`, set `HERMES_API_KEY` or `hermesApiKey` on the dashboard server side.
+
+## Hermes Context
+
+The dashboard exposes a read-only Hermes context surface at `/api/hermes/context`. It reads local Hermes state from `~/.hermes/state.db` and recent gateway activity from `~/.hermes/logs/gateway.log`, redacts obvious secrets, and powers the Hermes Context view in the UI. Use this for Hermes conversation/tool/runtime history; it does not depend on Codex UI or Codex thread state.
 
 ## Cron LLM Models
 

@@ -119,8 +119,8 @@ function statusFromEnvelope(envelope: XhsEnvelope, command: XhsIdentityCommand):
   const data = objectValue(envelope.data) ?? {};
   const user = objectValue(data.user) ?? (command === "whoami" ? data : {});
   const guest = Boolean(user.guest);
-  const nickname = stringValue(user.nickname ?? user.name);
-  const redId = stringValue(user.red_id ?? user.username);
+  const nickname = firstString(user.nickname, user.name, user.nick_name);
+  const redId = firstString(user.red_id, user.redId, user.redid, user.username, user.user_id, user.userid, user.id);
   const commandAuthenticated = command === "status" ? Boolean(data.authenticated) : Boolean(envelope.ok);
   const hasIdentity = Boolean((nickname && nickname !== "Unknown") || redId);
   const authenticated = Boolean(envelope.ok) && commandAuthenticated && !guest && hasIdentity;
@@ -223,4 +223,12 @@ function globalAuthCookiePath(): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const next = stringValue(value);
+    if (next) return next;
+  }
+  return undefined;
 }

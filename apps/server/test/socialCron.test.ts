@@ -1,13 +1,14 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
 import type { AppConfig } from "../src/config";
+import { JobStore } from "../src/jobs";
 import { createSocialBoardTask, listSocialBoardTasks } from "../src/socialBoard";
 import { listSocialTaskCalendar } from "../src/socialCalendar";
-import { computeNextSocialCronRun, createSocialCronJob, listSocialCronJobs, parseSocialCronSchedule } from "../src/socialCron";
+import { computeNextSocialCronRun, createSocialCronJob, listSocialCronJobs, parseSocialCronSchedule, runDueSocialCronJobs } from "../src/socialCron";
 import { buildSocialTaskCommand } from "../src/socialTaskCommands";
 
 function config(agents = ["growth-agent"]): AppConfig {
@@ -28,6 +29,12 @@ function config(agents = ["growth-agent"]): AppConfig {
 
 function createProfile(appConfig: AppConfig, profile = "astrozi") {
   mkdirSync(join(appConfig.growthRoot, profile, "xiaohongshu"), { recursive: true });
+}
+
+function writeHermesCronJobs(appConfig: AppConfig, jobs: unknown[]) {
+  const cronRoot = join(appConfig.hermesHome, "cron");
+  mkdirSync(cronRoot, { recursive: true });
+  writeFileSync(join(cronRoot, "jobs.json"), JSON.stringify({ jobs }, null, 2));
 }
 
 describe("social cron jobs", () => {
@@ -69,6 +76,79 @@ describe("social cron jobs", () => {
     expect(command.args).toContain("gpt-5.4");
   });
 
+  test("surfaces Xiaohongshu Hermes cron jobs as read-only social cron entries", () => {
+    const appConfig = config();
+    writeHermesCronJobs(appConfig, [
+      {
+        id: "c6333b595e58",
+        name: "xhs-astrozi-topic-harvest-daily",
+        prompt: "Workspace is vault-only: `/Users/chris/.growth/vault/astrozi/xiaohongshu/`. Return 3-5 candidate topics.",
+        skills: ["xiaohongshu-skill"],
+        schedule: { kind: "cron", expr: "15 9 * * *", display: "15 9 * * *" },
+        enabled: true,
+        state: "scheduled",
+        created_at: "2026-05-17T20:59:36.895712+08:00",
+        next_run_at: "2026-05-18T09:15:00+08:00",
+        repeat: { completed: 0 },
+        workdir: "/Users/chris/.hermes/skills/social-media/xiaohongshu-skill"
+      },
+      {
+        id: "not-social",
+        name: "gbrain-live-sync",
+        schedule: { kind: "interval", minutes: 15, display: "every 15m" },
+        enabled: true
+      }
+    ]);
+
+    const jobs = listSocialCronJobs(appConfig);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      id: "hermes:c6333b595e58",
+      source: "hermes",
+      readOnly: true,
+      platform: "xiaohongshu",
+      profile: "astrozi",
+      taskType: "topic-harvest",
+      schedule: { display: "daily 09:15" }
+    });
+    expect(listSocialTaskCalendar(appConfig)[0]).toMatchObject({
+      id: "hermes:c6333b595e58",
+      cronSource: "hermes",
+      readOnly: true,
+      runner: "hermes"
+    });
+  });
+
+  test("does not execute read-through Hermes cron entries from the local scheduler", () => {
+    const appConfig = config();
+    writeHermesCronJobs(appConfig, [
+      {
+        id: "c6333b595e58",
+        name: "xhs-astrozi-topic-harvest-daily",
+        prompt: "Workspace is vault-only: `/Users/chris/.growth/vault/astrozi/xiaohongshu/`.",
+        skills: ["xiaohongshu-skill"],
+        schedule: { kind: "cron", expr: "15 9 * * *", display: "15 9 * * *" },
+        enabled: true,
+        state: "scheduled",
+        next_run_at: "2026-05-17T09:15:00+08:00"
+      }
+    ]);
+
+    expect(listSocialCronJobs(appConfig)).toHaveLength(1);
+    expect(runDueSocialCronJobs(appConfig, new JobStore(), new Date("2026-05-17T09:30:00+08:00"))).toEqual([]);
+  });
+
+  test("runs document tasks against the Xiaohongshu vault when it exists", () => {
+    const appConfig = config();
+    createProfile(appConfig);
+    const documentRoot = join(appConfig.growthRoot, "vault", "astrozi", "xiaohongshu");
+    mkdirSync(documentRoot, { recursive: true });
+
+    const command = buildSocialTaskCommand(appConfig, "xiaohongshu", "astrozi", "workspace-diagnosis");
+
+    expect(command.args).toContain(documentRoot);
+  });
+
   test("rejects cron jobs outside configured agents", () => {
     const appConfig = config(["growth-agent"]);
     createProfile(appConfig);
@@ -82,6 +162,19 @@ describe("social cron jobs", () => {
         schedule: "daily 09:00"
       })
     ).toThrow("agent_not_allowed:researcher");
+  });
+
+  test("rejects scheduled tasks for platforms without a CLI adapter", () => {
+    const appConfig = config();
+
+    expect(() =>
+      createSocialCronJob(appConfig, {
+        platform: "facebook",
+        profile: "astrozi",
+        taskType: "workspace-diagnosis",
+        schedule: "daily 09:00"
+      })
+    ).toThrow("task_not_supported:facebook/workspace-diagnosis");
   });
 
   test("parses interval and daily cron expressions without arbitrary command input", () => {

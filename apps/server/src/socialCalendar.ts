@@ -11,10 +11,12 @@ export function listSocialTaskCalendar(config: AppConfig): SocialTaskCalendarIte
     .map((job) => ({
       id: job.id,
       source: "cron",
+      cronSource: job.source ?? "growth",
+      readOnly: job.readOnly,
       title: job.name,
       startsAt: job.nextRunAt as string,
       agentId: job.agentId,
-      runner: agents.get(job.agentId) ?? "local",
+      runner: job.source === "hermes" ? "hermes" : agents.get(job.agentId) ?? "local",
       llm: job.llm,
       platform: job.platform,
       profile: job.profile,

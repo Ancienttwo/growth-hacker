@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   Copy,
@@ -17,6 +18,7 @@ import {
   Heart,
   Image as ImageIcon,
   KeyRound,
+  Languages,
   LayoutDashboard,
   Loader2,
   MessageSquare,
@@ -39,6 +41,8 @@ import {
   Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -47,18 +51,24 @@ import remarkGfm from "remark-gfm";
 import type {
   ArtifactContent,
   ArtifactInfo,
+  HermesContextSnapshot,
+  HermesGatewayEvent,
   HermesLlmSelection,
   HermesModelOptions,
   HermesModelOption,
+  HermesMessageSummary,
+  HermesSessionSummary,
   HermesSkillInfo,
   JobSnapshot,
   MigrationPlan,
+  PlatformId,
   RuntimeStatus,
   SocialAgent,
   SocialBoardTask,
   SocialBoardTaskStatus,
   SocialCronJob,
   SocialCronTaskType,
+  SocialPlatformInfo,
   SocialTaskCalendarItem,
   WorkspaceProfile,
   XhsAutoReplyItem,
@@ -80,7 +90,21 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveChatMarkdownImageUrl } from "@/chatMarkdown";
+import { intlLocale, languageLabel, speechLocale, useI18n, type I18nKey, type I18nLocale, type TFunction } from "@/i18n";
 import { cn } from "@/lib/utils";
+import {
+  fallbackSocialPlatforms,
+  isSameWorkspace,
+  normalizePlatformMode,
+  platformLogoSrc,
+  platformModeStorageKey,
+  resolveDashboardViewForPlatform,
+  selectProfileForPlatform,
+  sharedDashboardViews,
+  socialPlatformInfo,
+  visibleDashboardViews
+} from "@/platformNavigation";
+import type { DashboardView } from "@/platformNavigation";
 
 interface WorkspacesResponse {
   profiles: WorkspaceProfile[];
@@ -88,6 +112,10 @@ interface WorkspacesResponse {
 
 interface RuntimeResponse {
   runtimes: RuntimeStatus[];
+}
+
+interface SocialPlatformsResponse {
+  platforms: SocialPlatformInfo[];
 }
 
 interface SocialCronResponse {
@@ -155,6 +183,8 @@ interface HermesSkillsResponse {
 interface HermesSkillUpdateResponse {
   skill: HermesSkillInfo;
 }
+
+type HermesContextResponse = HermesContextSnapshot;
 
 interface HermesChatStatus {
   available: boolean;
@@ -288,38 +318,89 @@ const platformLabel: Record<string, string> = {
   instagram: "Instagram"
 };
 
-const socialCronTaskLabel: Record<SocialCronTaskType, string> = {
-  "workspace-diagnosis": "Diagnosis",
-  "daily-ops-refresh": "Daily Ops",
-  "health-report": "Health",
-  "auto-reply": "Auto Replies"
+const socialCronTaskLabelKey: Record<SocialCronTaskType, I18nKey> = {
+  "workspace-diagnosis": "socialCron.workspaceDiagnosis",
+  "daily-ops-refresh": "socialCron.dailyOpsRefresh",
+  "health-report": "socialCron.healthReport",
+  "auto-reply": "socialCron.autoReply",
+  "topic-harvest": "socialCron.topicHarvest"
 };
 
-const publishedPostStatusLabel: Record<XhsPublishedPostStatus, string> = {
-  published: "已发布",
-  monitoring: "监测中",
-  "needs-review": "需复盘",
-  archived: "已归档"
+const publishedPostStatusLabelKey: Record<XhsPublishedPostStatus, I18nKey> = {
+  published: "publishedStatus.published",
+  monitoring: "publishedStatus.monitoring",
+  "needs-review": "publishedStatus.needsReview",
+  archived: "publishedStatus.archived"
 };
 
 const publishedPostStatusOptions: Array<XhsPublishedPostStatus | "all"> = ["all", "published", "monitoring", "needs-review", "archived"];
-const autoReplyStatusLabel: Record<XhsAutoReplyItemStatus, string> = {
-  pending: "待回复",
-  drafted: "已起草",
-  sent: "已发送",
-  skipped: "已跳过",
-  "needs-review": "需复核",
-  failed: "失败",
-  "already-replied": "已回复"
+const autoReplyStatusLabelKey: Record<XhsAutoReplyItemStatus, I18nKey> = {
+  pending: "autoReply.status.pending",
+  drafted: "autoReply.status.drafted",
+  sent: "autoReply.status.sent",
+  skipped: "autoReply.status.skipped",
+  "needs-review": "autoReply.status.needsReview",
+  failed: "autoReply.status.failed",
+  "already-replied": "autoReply.status.alreadyReplied"
 };
-const autoReplyLocaleLabel: Record<XhsAutoReplyLocale, string> = {
-  "zh-CN": "中国简中",
-  "zh-HK": "香港繁中",
-  "zh-TW": "台湾繁中",
-  en: "英语",
-  "zh-SG-MY": "新马简中"
+const autoReplyLocaleLabelKey: Record<XhsAutoReplyLocale, I18nKey> = {
+  "zh-CN": "autoReply.locale.zhCN",
+  "zh-HK": "autoReply.locale.zhHK",
+  "zh-TW": "autoReply.locale.zhTW",
+  en: "autoReply.locale.en",
+  "zh-SG-MY": "autoReply.locale.zhSGMY"
 };
-const autoReplyLocaleOptions = Object.keys(autoReplyLocaleLabel) as XhsAutoReplyLocale[];
+const autoReplyLocaleOptions = Object.keys(autoReplyLocaleLabelKey) as XhsAutoReplyLocale[];
+const autoReplyStylePresets: Array<{ id: string; labelKey: I18nKey; descriptionKey: I18nKey; prompt: string }> = [
+  {
+    id: "girlfriend-seeding",
+    labelKey: "autoReply.preset.girlfriend.label",
+    descriptionKey: "autoReply.preset.girlfriend.description",
+    prompt: [
+      "闺蜜安利风：像朋友在评论区自然接话，热情但不硬卖。",
+      "回复 15-35 字，短句，最多 1 个 emoji。",
+      "先回应对方问题，再给一个轻量建议或真实感受。",
+      "可少量使用“姐妹/宝宝/家人们”，不要每条都用。",
+      "不承诺效果，不引导私信，不留联系方式。"
+    ].join("\n")
+  },
+  {
+    id: "tutorial-helper",
+    labelKey: "autoReply.preset.tutorial.label",
+    descriptionKey: "autoReply.preset.tutorial.description",
+    prompt: [
+      "干货答疑风：像作者在认真补充说明，直接解决评论里的问题。",
+      "回复 20-50 字，优先给步骤、条件或判断标准。",
+      "可以用“先看这点/重点是/建议先...”这种口吻。",
+      "不要写成长段教程，不要加话题标签。",
+      "遇到不确定、强个案或专业风险，标记 needs-review。"
+    ].join("\n")
+  },
+  {
+    id: "pitfall-list",
+    labelKey: "autoReply.preset.pitfall.label",
+    descriptionKey: "autoReply.preset.pitfall.description",
+    prompt: [
+      "排雷避坑风：像做过对比后的评论区提醒，语气真诚克制。",
+      "回复 15-45 字，先认可对方感受，再指出一个避坑点。",
+      "可用“这个点真的要注意/别急着冲/先看适不适合你”。",
+      "避免制造焦虑，不攻击品牌或他人。",
+      "不做绝对化判断，不承诺结果。"
+    ].join("\n")
+  },
+  {
+    id: "soft-interaction",
+    labelKey: "autoReply.preset.interaction.label",
+    descriptionKey: "autoReply.preset.interaction.description",
+    prompt: [
+      "高互动风：像账号本人在评论区继续聊天，目标是自然延长讨论。",
+      "回复 15-35 字，先接住评论，再抛一个轻问题。",
+      "可用“你更想看哪种/你现在是哪种情况/我下次补这个”。",
+      "不要硬要点赞关注收藏，不要引导私信。",
+      "广告、辱骂、隐私、联系方式相关评论直接 skip。"
+    ].join("\n")
+  }
+];
 const defaultAutoReplySettings: XhsAutoReplySettings = {
   stylePrompt: "",
   locale: "zh-CN",
@@ -329,16 +410,25 @@ const defaultAutoReplySettings: XhsAutoReplySettings = {
 };
 const defaultSocialCronTaskTypes: SocialCronTaskType[] = ["workspace-diagnosis", "daily-ops-refresh", "health-report", "auto-reply"];
 const boardStatuses: SocialBoardTaskStatus[] = ["todo", "ready", "running", "blocked", "done", "failed", "archived"];
-const chatPermissionLabels: Record<ChatPermissionMode, string> = {
-  full_access: "完全访问权限",
-  ask: "询问权限",
-  read_only: "只读模式"
+const boardStatusLabelKey: Record<SocialBoardTaskStatus, I18nKey> = {
+  todo: "board.status.todo",
+  ready: "board.status.ready",
+  running: "board.status.running",
+  blocked: "board.status.blocked",
+  done: "board.status.done",
+  failed: "board.status.failed",
+  archived: "board.status.archived"
 };
-const chatReasoningLabels: Record<ChatReasoningEffort, string> = {
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "超高"
+const chatPermissionLabelKey: Record<ChatPermissionMode, I18nKey> = {
+  full_access: "chat.permission.fullAccess",
+  ask: "chat.permission.ask",
+  read_only: "chat.permission.readOnly"
+};
+const chatReasoningLabelKey: Record<ChatReasoningEffort, I18nKey> = {
+  low: "chat.effort.low",
+  medium: "chat.effort.medium",
+  high: "chat.effort.high",
+  xhigh: "chat.effort.xhigh"
 };
 const chatModelOptions = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark"];
 const fallbackHermesModelOptions: HermesModelOptions = {
@@ -369,33 +459,47 @@ const chatDefaultSessionTitle = "New session";
 const chatSessionLimit = 24;
 const chatSessionsStorageKey = "growth-hacker.chatSessions";
 const activeChatSessionStorageKey = "growth-hacker.activeChatSessionId";
+const chatModelContextWindows: Record<string, number> = {
+  "gpt-5.5": 258000,
+  "gpt-5.4": 1050000,
+  "gpt-5.3-codex-spark": 128000
+};
+const vaultWorkspacePlatform = "vault";
+const vaultWorkspaceProfile = "vault";
+const vaultWorkspaceRoot = "~/.growth/vault";
 
-type DashboardView = "workspace" | "published" | "replies" | "calendar" | "board" | "chat" | "skills" | "jobs" | "setup";
+type KnowledgeSubNavTab = "explorer" | "sessions";
 
-const dashboardNav: Array<{ id: DashboardView; label: string; icon: LucideIcon }> = [
-  { id: "workspace", label: "Workspace", icon: LayoutDashboard },
-  { id: "published", label: "Published Posts", icon: ImageIcon },
-  { id: "replies", label: "Auto Replies", icon: Reply },
-  { id: "calendar", label: "Task Calendar", icon: CalendarClock },
-  { id: "board", label: "Social Board", icon: Bot },
-  { id: "chat", label: "Chat", icon: MessageSquare },
-  { id: "skills", label: "Skills", icon: Gauge },
-  { id: "jobs", label: "Job Log", icon: Terminal },
-  { id: "setup", label: "Setup", icon: KeyRound }
-];
+const dashboardNavById: Record<DashboardView, { id: DashboardView; labelKey: I18nKey; icon: LucideIcon }> = {
+  workspace: { id: "workspace", labelKey: "nav.workspace", icon: LayoutDashboard },
+  knowledge: { id: "knowledge", labelKey: "nav.knowledge", icon: Bookmark },
+  published: { id: "published", labelKey: "nav.published", icon: ImageIcon },
+  replies: { id: "replies", labelKey: "nav.replies", icon: Reply },
+  calendar: { id: "calendar", labelKey: "nav.calendar", icon: CalendarClock },
+  board: { id: "board", labelKey: "nav.board", icon: Bot },
+  chat: { id: "chat", labelKey: "nav.chat", icon: MessageSquare },
+  hermes: { id: "hermes", labelKey: "nav.hermes", icon: Activity },
+  skills: { id: "skills", labelKey: "nav.skills", icon: Gauge },
+  jobs: { id: "jobs", labelKey: "nav.jobs", icon: Terminal },
+  setup: { id: "setup", labelKey: "nav.setup", icon: KeyRound }
+};
 
 const defaultChatModel = localStorage.getItem("growth-hacker.chatModel") ?? "gpt-5.5";
 const defaultChatReasoningEffort = normalizeChatReasoningEffort(localStorage.getItem("growth-hacker.chatReasoningEffort") ?? "xhigh");
 const defaultChatPermissionMode = normalizeChatPermissionMode(localStorage.getItem("growth-hacker.chatPermissionMode") ?? "ask");
 
 export function App() {
+  const { locale, localeOptions, setLocale, t } = useI18n();
   const [profiles, setProfiles] = useState<WorkspaceProfile[]>([]);
+  const [platforms, setPlatforms] = useState<SocialPlatformInfo[]>(fallbackSocialPlatforms);
   const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([]);
   const [migration, setMigration] = useState<MigrationPlan | null>(null);
   const [auth, setAuth] = useState<XhsAuthStatus | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<WorkspaceProfile | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactContent | null>(null);
+  const [vaultArtifacts, setVaultArtifacts] = useState<ArtifactInfo[]>([]);
+  const [selectedVaultArtifact, setSelectedVaultArtifact] = useState<ArtifactContent | null>(null);
   const [selectedJob, setSelectedJob] = useState<JobSnapshot | null>(null);
   const [socialCronJobs, setSocialCronJobs] = useState<SocialCronJob[]>([]);
   const [socialCronAgents, setSocialCronAgents] = useState<string[]>([]);
@@ -412,6 +516,7 @@ export function App() {
   const [hermesChatStatus, setHermesChatStatus] = useState<HermesChatStatus | null>(null);
   const [hermesModelOptions, setHermesModelOptions] = useState<HermesModelOptions>(fallbackHermesModelOptions);
   const [hermesSkills, setHermesSkills] = useState<HermesSkillInfo[]>([]);
+  const [hermesContext, setHermesContext] = useState<HermesContextSnapshot | null>(null);
   const [chatSessionState, setChatSessionState] = useState<ChatSessionState>(() => loadChatSessionState());
   const [activeChatRunId, setActiveChatRunId] = useState<string | null>(null);
   const [chatPermissionMode, setChatPermissionMode] = useState<ChatPermissionMode>(defaultChatPermissionMode);
@@ -426,7 +531,13 @@ export function App() {
   const [socialCronAgentId, setSocialCronAgentId] = useState("growth-agent");
   const [selectedLlmValue, setSelectedLlmValue] = useState(localStorage.getItem("growth-hacker.socialLlm") ?? "");
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set());
+  const [expandedVaultDirectories, setExpandedVaultDirectories] = useState<Set<string>>(() => new Set());
+  const [activePlatform, setActivePlatform] = useState<PlatformId>(() => normalizePlatformMode(localStorage.getItem(platformModeStorageKey)));
+  const [selectedProfilesByPlatform, setSelectedProfilesByPlatform] = useState<Partial<Record<PlatformId, WorkspaceProfile>>>({});
   const [activeView, setActiveView] = useState<DashboardView>("workspace");
+  const [calendarWeekStartDate, setCalendarWeekStartDate] = useState(() => startOfWeek(new Date()));
+  const [calendarWeekWasChanged, setCalendarWeekWasChanged] = useState(false);
+  const [knowledgeSubNavTab, setKnowledgeSubNavTab] = useState<KnowledgeSubNavTab>("explorer");
   const [chatDraft, setChatDraft] = useState("");
   const [skillSearch, setSkillSearch] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -439,16 +550,19 @@ export function App() {
       runtimePayload,
       migrationPayload,
       authPayload,
+      platformsPayload,
       socialCronPayload,
       socialBoardPayload,
       socialCalendarPayload,
       hermesModelsPayload,
+      hermesContextPayload,
       chatStatusPayload
     ] = await Promise.all([
       api<WorkspacesResponse>("/api/workspaces"),
       api<RuntimeResponse>("/api/runtimes"),
       api<MigrationPlan>("/api/migrations/xiaohongshu-legacy/plan", { method: "POST" }),
       api<XhsAuthStatus>("/api/platforms/xiaohongshu/auth"),
+      api<SocialPlatformsResponse>("/api/platforms").catch(() => ({ platforms: fallbackSocialPlatforms })),
       api<SocialCronResponse>("/api/social-cron/jobs").catch(() => ({
         jobs: [],
         agents: ["growth-agent"],
@@ -458,21 +572,24 @@ export function App() {
       api<SocialBoardResponse>("/api/social-board/tasks").catch(() => ({ tasks: [], agents: [], taskTypes: defaultSocialCronTaskTypes })),
       api<SocialCalendarResponse>("/api/social-calendar/items").catch(() => ({ items: [] })),
       api<HermesModelOptions>("/api/hermes/models").catch(() => fallbackHermesModelOptions),
+      api<HermesContextResponse>("/api/hermes/context").catch(() => null),
       getHermesChatStatus()
     ]);
     setProfiles(workspacePayload.profiles);
     setRuntimes(runtimePayload.runtimes);
     setMigration(migrationPayload);
     setAuth(authPayload);
+    setPlatforms(platformsPayload.platforms.length ? platformsPayload.platforms : fallbackSocialPlatforms);
     setSocialCronJobs(socialCronPayload.jobs);
     setSocialCronAgents(socialCronPayload.agents);
     setSocialAgents(socialCronPayload.socialAgents ?? socialBoardPayload.agents);
     setSocialBoardTasks(socialBoardPayload.tasks);
     setSocialCalendarItems(socialCalendarPayload.items);
     setHermesModelOptions(hermesModelsPayload.models.length ? hermesModelsPayload : fallbackHermesModelOptions);
+    setHermesContext(hermesContextPayload);
     setHermesChatStatus(chatStatusPayload);
     setSocialCronTaskTypes(socialCronPayload.taskTypes.length ? socialCronPayload.taskTypes : defaultSocialCronTaskTypes);
-    if (!selectedProfile && workspacePayload.profiles[0]) setSelectedProfile(workspacePayload.profiles[0]);
+    setActivePlatform((current) => normalizePlatformMode(current, platformsPayload.platforms.length ? platformsPayload.platforms : fallbackSocialPlatforms));
   };
 
   useEffect(() => {
@@ -492,7 +609,14 @@ export function App() {
   }, [hermesModelOptions.current?.provider, hermesModelOptions.current?.model, selectedLlmValue]);
 
   useEffect(() => {
-    if (!selectedProfile) return;
+    if (!selectedProfile) {
+      setArtifacts([]);
+      setSelectedArtifact(null);
+      setPublishedPosts([]);
+      setAutoReplyItems([]);
+      setAutoReplySettings(defaultAutoReplySettings);
+      return;
+    }
     setExpandedDirectories(new Set());
     setPublishedSyncNotice(null);
     setAutoReplyNotice(null);
@@ -517,6 +641,16 @@ export function App() {
   }, [selectedProfile?.platform, selectedProfile?.profile]);
 
   useEffect(() => {
+    if (activeView !== "knowledge") return;
+    void reloadVaultArtifacts(selectedVaultArtifact?.artifact.path);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView !== "hermes") return;
+    void reloadHermesContext();
+  }, [activeView]);
+
+  useEffect(() => {
     localStorage.setItem("growth-hacker.chatPermissionMode", chatPermissionMode);
   }, [chatPermissionMode]);
 
@@ -539,11 +673,65 @@ export function App() {
 
   const hermes = runtimes.find((runtime) => runtime.kind === "hermes");
   const openclaw = runtimes.find((runtime) => runtime.kind === "openclaw");
-  const profileGroups = useMemo(() => groupByPlatform(profiles), [profiles]);
+  const activePlatformInfo = useMemo(() => socialPlatformInfo(platforms, activePlatform), [activePlatform, platforms]);
+  const visibleModeViewIds = useMemo(() => visibleDashboardViews(activePlatformInfo), [activePlatformInfo]);
+  const modeSpecificNav = useMemo(
+    () => visibleModeViewIds.filter((view) => !sharedDashboardViews.includes(view)).map((view) => dashboardNavById[view]),
+    [visibleModeViewIds]
+  );
+  const sharedNav = useMemo(() => sharedDashboardViews.map((view) => dashboardNavById[view]), []);
+  const activePlatformProfiles = useMemo(() => profiles.filter((profile) => profile.platform === activePlatform), [activePlatform, profiles]);
+  const activeProfileGroups = useMemo(() => groupByPlatform(activePlatformProfiles), [activePlatformProfiles]);
+  const activeSocialCronTaskTypes = useMemo(
+    () => socialCronTaskTypes.filter((taskType) => activePlatformInfo.capabilities.scheduledTasks.includes(taskType)),
+    [activePlatformInfo.capabilities.scheduledTasks, socialCronTaskTypes]
+  );
+  const activeSocialCronJobs = useMemo(() => socialCronJobs.filter((job) => job.platform === activePlatform), [activePlatform, socialCronJobs]);
+  const activeSocialBoardTasks = useMemo(() => socialBoardTasks.filter((task) => task.platform === activePlatform), [activePlatform, socialBoardTasks]);
+  const activeSocialCalendarItems = useMemo(
+    () => socialCalendarItems.filter((item) => item.platform === activePlatform),
+    [activePlatform, socialCalendarItems]
+  );
+  const defaultCalendarWeekStart = useMemo(
+    () => resolveDefaultCalendarWeekStart(activeSocialCalendarItems, activeSocialCronJobs),
+    [activeSocialCalendarItems, activeSocialCronJobs]
+  );
   const artifactTree = useMemo(() => buildArtifactTree(artifacts), [artifacts]);
   const visibleArtifacts = useMemo(() => flattenArtifactTree(artifactTree, expandedDirectories), [artifactTree, expandedDirectories]);
+  const vaultArtifactTree = useMemo(() => buildArtifactTree(vaultArtifacts), [vaultArtifacts]);
+  const visibleVaultArtifacts = useMemo(
+    () => flattenArtifactTree(vaultArtifactTree, expandedVaultDirectories),
+    [vaultArtifactTree, expandedVaultDirectories]
+  );
   const activeChatSession = chatSessionState.sessions.find((session) => session.id === chatSessionState.activeId) ?? chatSessionState.sessions[0];
   const chatEvents = activeChatSession?.events ?? [];
+
+  useEffect(() => {
+    localStorage.setItem(platformModeStorageKey, activePlatform);
+  }, [activePlatform]);
+
+  useEffect(() => {
+    setCalendarWeekWasChanged(false);
+  }, [activePlatform]);
+
+  useEffect(() => {
+    if (!calendarWeekWasChanged) setCalendarWeekStartDate(defaultCalendarWeekStart);
+  }, [calendarWeekWasChanged, defaultCalendarWeekStart]);
+
+  useEffect(() => {
+    setActiveView((current) => resolveDashboardViewForPlatform(current, activePlatformInfo));
+  }, [activePlatformInfo]);
+
+  useEffect(() => {
+    const next = selectProfileForPlatform(profiles, activePlatform, selectedProfilesByPlatform[activePlatform]);
+    setSelectedProfile((current) => (isSameWorkspace(current, next) ? current : next));
+  }, [activePlatform, profiles, selectedProfilesByPlatform]);
+
+  useEffect(() => {
+    if (activeSocialCronTaskTypes.length && !activeSocialCronTaskTypes.includes(socialCronTaskType)) {
+      setSocialCronTaskType(activeSocialCronTaskTypes[0]);
+    }
+  }, [activeSocialCronTaskTypes, socialCronTaskType]);
 
   useEffect(() => {
     if (!activeChatSession) return;
@@ -561,6 +749,7 @@ export function App() {
         setActiveChatRunId((current) => (current === runId ? null : current));
         setBusy((current) => (current === "chat-run" ? null : current));
         void refresh();
+        if (activeView === "knowledge") void reloadVaultArtifacts(selectedVaultArtifact?.artifact.path);
       })
       .catch((error) => {
         updateChatSessionEvents(activeChatSession.id, (current) =>
@@ -584,13 +773,21 @@ export function App() {
       });
   }, [activeChatSession, activeChatRunId, selectedProfile]);
 
-  const selectedChatAgentId = activeView === "chat" ? activeChatSession?.agentId : undefined;
+  const selectedChatAgentId = activeView === "chat" || activeView === "knowledge" ? activeChatSession?.agentId : undefined;
   const selectedSocialAgent =
     socialAgents.find((agent) => agent.id === selectedChatAgentId) ??
     socialAgents.find((agent) => agent.id === socialCronAgentId) ??
     socialAgents[0];
   const selectedLlm = hermesLlmFromValue(selectedLlmValue) ?? hermesModelOptions.current;
-  const activeNavItem = dashboardNav.find((item) => item.id === activeView) ?? dashboardNav[0];
+  const activeNavItem = dashboardNavById[activeView] ?? dashboardNavById.workspace;
+  const activeNavLabel = t(activeNavItem.labelKey);
+  const topbarTitle =
+    activeView === "chat" || activeView === "knowledge"
+      ? activeChatSession
+        ? displayChatSessionTitle(activeChatSession, t)
+        : t("common.newSession")
+      : activeNavLabel;
+  const topbarEyebrow = activeView === "chat" ? activeNavLabel : topbarContext(activeView, selectedProfile, activePlatform, t);
   useEffect(() => {
     if (!selectedSocialAgent) {
       setHermesSkills([]);
@@ -611,6 +808,18 @@ export function App() {
     });
   }
 
+  function toggleVaultDirectory(path: string) {
+    setExpandedVaultDirectories((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }
+
   async function openArtifact(artifact: ArtifactInfo) {
     if (!selectedProfile || artifact.kind !== "file") return;
     const payload = await api<ArtifactContent>(
@@ -619,6 +828,49 @@ export function App() {
       )}/artifact?path=${encodeURIComponent(artifact.path)}`
     );
     setSelectedArtifact(payload);
+  }
+
+  async function reloadVaultArtifacts(preferredPath = selectedVaultArtifact?.artifact.path): Promise<ArtifactInfo[]> {
+    const payload = await api<{ artifacts: ArtifactInfo[] }>("/api/vault/artifacts").catch(() => ({ artifacts: [] }));
+    setVaultArtifacts(payload.artifacts);
+    const next =
+      (preferredPath ? payload.artifacts.find((item) => item.kind === "file" && item.path === preferredPath) : undefined) ??
+      payload.artifacts.find((item) => item.kind === "file" && item.mime === "markdown") ??
+      payload.artifacts.find((item) => item.kind === "file");
+    if (next) {
+      await openVaultArtifact(next);
+    } else {
+      setSelectedVaultArtifact(null);
+    }
+    return payload.artifacts;
+  }
+
+  async function openVaultArtifact(artifact: ArtifactInfo) {
+    if (artifact.kind !== "file") return;
+    const payload = await api<ArtifactContent>(`/api/vault/artifact?path=${encodeURIComponent(artifact.path)}`);
+    setSelectedVaultArtifact(payload);
+  }
+
+  function referenceVaultArtifact(artifactContent = selectedVaultArtifact) {
+    if (!artifactContent?.content) return;
+    const path = artifactContent.artifact.path;
+    const content = buildVaultAttachmentContent(artifactContent);
+    const id = `vault:${path}:${artifactContent.artifact.updatedAt ?? ""}`;
+    setChatAttachments((current) =>
+      current.some((attachment) => attachment.id === id || attachment.name === `vault:${path}`)
+        ? current
+        : [
+            ...current,
+            {
+              id,
+              name: `vault:${path}`,
+              mime: artifactContent.artifact.mime === "markdown" ? "text/markdown" : "text/plain",
+              size: content.length,
+              content: truncateAttachmentContent(content)
+            }
+          ]
+    );
+    setChatComposerNotice(t("notice.referenced", { path }));
   }
 
   async function runMigration() {
@@ -706,9 +958,9 @@ export function App() {
         { method: "POST" }
       );
       setPublishedPosts(payload.posts);
-      setPublishedSyncNotice(`同步完成：新增 ${payload.imported}，更新 ${payload.updated}，归档 ${payload.archived}`);
+      setPublishedSyncNotice(t("published.syncSuccess", { imported: payload.imported, updated: payload.updated, archived: payload.archived }));
     } catch (error) {
-      setPublishedSyncNotice(error instanceof Error ? error.message : "同步失败");
+      setPublishedSyncNotice(error instanceof Error ? error.message : t("published.syncFailed"));
     } finally {
       setBusy(null);
     }
@@ -753,9 +1005,9 @@ export function App() {
     try {
       const payload = await persistAutoReplySettings(nextSettings);
       setAutoReplySettings(payload.settings);
-      setAutoReplyNotice("回复风格已保存。");
+      setAutoReplyNotice(t("autoReply.saveSuccess"));
     } catch (error) {
-      setAutoReplyNotice(error instanceof Error ? error.message : "保存失败");
+      setAutoReplyNotice(error instanceof Error ? error.message : t("autoReply.saveFailed"));
     } finally {
       setBusy(null);
     }
@@ -783,10 +1035,12 @@ export function App() {
         { method: "POST" }
       );
       setAutoReplyItems(payload.items);
-      const errorText = payload.errors.length ? `；错误 ${payload.errors.length}` : "";
-      setAutoReplyNotice(`同步完成：新增 ${payload.imported}，更新 ${payload.updated}，已回复 ${payload.alreadyReplied}${errorText}`);
+      const errorText = payload.errors.length ? t("autoReply.syncErrors", { count: payload.errors.length }) : "";
+      setAutoReplyNotice(
+        t("autoReply.syncSuccess", { imported: payload.imported, updated: payload.updated, alreadyReplied: payload.alreadyReplied, errorText })
+      );
     } catch (error) {
-      setAutoReplyNotice(error instanceof Error ? error.message : "同步失败");
+      setAutoReplyNotice(error instanceof Error ? error.message : t("autoReply.syncFailed"));
     } finally {
       setBusy(null);
     }
@@ -814,7 +1068,7 @@ export function App() {
       await reloadSocialCron();
       setActiveView("jobs");
     } catch (error) {
-      setAutoReplyNotice(error instanceof Error ? error.message : "启动失败");
+      setAutoReplyNotice(error instanceof Error ? error.message : t("autoReply.runFailed"));
     } finally {
       setBusy(null);
     }
@@ -846,6 +1100,40 @@ export function App() {
     const payload = await api<HermesSkillsResponse>(`/api/agents/${encodeURIComponent(agentId)}/skills`).catch(() => ({ skills: [] }));
     setHermesSkills(payload.skills);
     return payload.skills;
+  }
+
+  async function reloadHermesContext(sessionId = hermesContext?.selectedSessionId): Promise<HermesContextSnapshot | null> {
+    const params = new URLSearchParams();
+    if (sessionId) params.set("sessionId", sessionId);
+    const payload = await api<HermesContextResponse>(`/api/hermes/context${params.size ? `?${params}` : ""}`).catch(() => null);
+    setHermesContext(payload);
+    return payload;
+  }
+
+  function selectHermesContextSession(sessionId: string) {
+    void reloadHermesContext(sessionId);
+  }
+
+  function referenceHermesContext() {
+    if (!hermesContext) return;
+    const content = buildHermesContextAttachmentContent(hermesContext);
+    const id = `hermes-context:${hermesContext.generatedAt}:${hermesContext.selectedSessionId ?? "latest"}`;
+    setChatAttachments((current) =>
+      current.some((attachment) => attachment.id === id)
+        ? current
+        : [
+            ...current,
+            {
+              id,
+              name: "hermes-context.json",
+              mime: "application/json",
+              size: content.length,
+              content: truncateAttachmentContent(content)
+            }
+          ]
+    );
+    setChatComposerNotice("已引用 Hermes context");
+    setActiveView("chat");
   }
 
   async function toggleHermesSkill(skill: HermesSkillInfo) {
@@ -964,7 +1252,7 @@ export function App() {
     const accepted = candidates.filter(isSupportedChatAttachment);
     const rejected = candidates.filter((file) => !isSupportedChatAttachment(file));
     if (rejected.length) {
-      setChatComposerNotice(`已忽略 ${rejected.length} 个非文本附件`);
+      setChatComposerNotice(t("notice.rejectedAttachments", { count: rejected.length }));
     } else {
       setChatComposerNotice(null);
     }
@@ -1096,9 +1384,11 @@ export function App() {
       return;
     }
     const runPermissionMode = chatPermissionMode;
-    const runProfile = selectedProfile;
-    const outgoingMessage =
+    const runProfile = activeView === "knowledge" ? null : selectedProfile;
+    const baseOutgoingMessage =
       runComposerMode === "image" ? buildImageGenerationChatMessage(message, chatAttachments) : buildChatMessageWithAttachments(message, chatAttachments);
+    const outgoingMessage =
+      activeView === "knowledge" ? buildVaultWorkspaceChatMessage(baseOutgoingMessage, selectedVaultArtifact) : baseOutgoingMessage;
     const clientSessionId = activeChatSession.id;
     const priorChatEvents = activeChatSession.events;
     const visibleUserMessage =
@@ -1154,6 +1444,7 @@ export function App() {
         setBusy(null);
         controller.abort();
         void refresh();
+        if (activeView === "knowledge") void reloadVaultArtifacts(selectedVaultArtifact?.artifact.path);
       };
       let statusPollError: unknown;
       const statusPoll = waitForHermesRunTerminal(run.runId, controller.signal)
@@ -1229,22 +1520,64 @@ export function App() {
     createChatSessionFromUi();
   }
 
+  function selectPlatformMode(platform: PlatformId) {
+    const normalized = normalizePlatformMode(platform, platforms);
+    const nextPlatform = socialPlatformInfo(platforms, normalized);
+    setActivePlatform(normalized);
+    setActiveView((current) => resolveDashboardViewForPlatform(current, nextPlatform));
+  }
+
+  function selectWorkspaceProfile(profile: WorkspaceProfile, nextView: DashboardView) {
+    const normalized = normalizePlatformMode(profile.platform, platforms);
+    setSelectedProfilesByPlatform((current) => ({ ...current, [normalized]: profile }));
+    setActivePlatform(normalized);
+    setSelectedProfile(profile);
+    setActiveView(resolveDashboardViewForPlatform(nextView, socialPlatformInfo(platforms, normalized)));
+  }
+
   return (
     <TooltipProvider delayDuration={120}>
       <div className="app-shell">
-        <aside className="icon-rail" aria-label="Primary navigation">
-          <div className="rail-logo" aria-label="Growth Hacker">
-            GH
-          </div>
+        <aside className="icon-rail" aria-label={t("aria.primaryNavigation")}>
+          <PlatformModeSwitcher activePlatform={activePlatformInfo} onSelect={selectPlatformMode} platforms={platforms} />
 
-          <nav className="rail-nav">
-            {dashboardNav.map((item) => {
+          {modeSpecificNav.length ? (
+            <nav className="rail-nav" aria-label={t("aria.platformTools", { platform: activePlatformInfo.label })}>
+              {modeSpecificNav.map((item) => {
+                const Icon = item.icon;
+                const label = t(item.labelKey);
+                return (
+                  <Tooltip key={item.id}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        aria-label={label}
+                        className={cn("rail-button", activeView === item.id && "rail-button-active")}
+                        onClick={() => setActiveView(item.id)}
+                        size="icon"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Icon className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">{label}</TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </nav>
+          ) : null}
+
+          {modeSpecificNav.length ? <div className="rail-divider" /> : null}
+
+          <nav className="rail-nav" aria-label={t("aria.sharedTools")}>
+            {sharedNav.map((item) => {
               const Icon = item.icon;
+              const label = t(item.labelKey);
               return (
                 <Tooltip key={item.id}>
                   <TooltipTrigger asChild>
                     <Button
-                      aria-label={item.label}
+                      aria-label={label}
                       className={cn("rail-button", activeView === item.id && "rail-button-active")}
                       onClick={() => setActiveView(item.id)}
                       size="icon"
@@ -1254,7 +1587,7 @@ export function App() {
                       <Icon className="size-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="right">{item.label}</TooltipContent>
+                  <TooltipContent side="right">{label}</TooltipContent>
                 </Tooltip>
               );
             })}
@@ -1263,19 +1596,34 @@ export function App() {
           <div className="rail-footer">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button aria-label="Refresh" className="rail-button" onClick={() => void refresh()} size="icon" type="button" variant="ghost">
+                <Button aria-label={t("common.refresh")} className="rail-button" onClick={() => void refresh()} size="icon" type="button" variant="ghost">
                   <RefreshCcw className="size-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right">Refresh</TooltipContent>
+              <TooltipContent side="right">{t("common.refresh")}</TooltipContent>
             </Tooltip>
           </div>
         </aside>
 
-        <aside className="sub-nav" aria-label={`${activeNavItem.label} navigation`}>
+        <aside className="sub-nav" aria-label={t("aria.subNavigation", { label: activeNavLabel })}>
           <div className="sub-nav-header">
-            <p>{activeNavItem.label}</p>
-            <h1>Growth Hacker</h1>
+            <div className="sub-nav-header-copy">
+              <p>{activeNavLabel}</p>
+              <h1>Growth Hacker</h1>
+            </div>
+            {activeView === "knowledge" || activeView === "chat" ? (
+              <Button
+                className="sub-nav-header-action"
+                disabled={Boolean(activeChatRunId)}
+                onClick={resetChat}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <Plus className="size-3.5" />
+                {t("common.new")}
+              </Button>
+            ) : null}
           </div>
           <Separator />
           <ScrollArea className="sub-nav-scroll">
@@ -1284,24 +1632,41 @@ export function App() {
                 artifacts={visibleArtifacts}
                 expandedDirectories={expandedDirectories}
                 onOpenArtifact={(artifact) => void openArtifact(artifact)}
-                onSelectProfile={(profile) => {
-                  setSelectedProfile(profile);
-                  setActiveView("workspace");
-                }}
+                onSelectProfile={(profile) => selectWorkspaceProfile(profile, "workspace")}
                 onToggleDirectory={toggleDirectory}
-                profileGroups={profileGroups}
+                profileGroups={activeProfileGroups}
                 selectedArtifact={selectedArtifact}
                 selectedProfile={selectedProfile}
+              />
+            ) : null}
+            {activeView === "knowledge" ? (
+              <KnowledgeSubNav
+                activeRunId={activeChatRunId}
+                activeSession={activeChatSession}
+                agents={socialAgents}
+                artifacts={visibleVaultArtifacts}
+                expandedDirectories={expandedVaultDirectories}
+                onDeleteSession={deleteChatSession}
+                onNewChat={resetChat}
+                onOpenArtifact={(artifact) => void openVaultArtifact(artifact)}
+                onReferenceCurrent={() => referenceVaultArtifact()}
+                onSelectAgent={updateChatSessionAgent}
+                onSelectSession={selectChatSession}
+                onTabChange={setKnowledgeSubNavTab}
+                onToggleDirectory={toggleVaultDirectory}
+                selectedAgent={selectedSocialAgent}
+                selectedArtifact={selectedVaultArtifact}
+                sessions={chatSessionState.sessions}
+                tab={knowledgeSubNavTab}
               />
             ) : null}
             {activeView === "published" ? (
               <PublishedPostsSubNav
                 onSelectProfile={(profile) => {
-                  setSelectedProfile(profile);
-                  setActiveView("published");
+                  selectWorkspaceProfile(profile, "published");
                 }}
                 posts={publishedPosts}
-                profileGroups={profileGroups}
+                profileGroups={activeProfileGroups}
                 selectedProfile={selectedProfile}
               />
             ) : null}
@@ -1311,22 +1676,21 @@ export function App() {
                 items={autoReplyItems}
                 onSelectAgent={setSocialCronAgentId}
                 onSelectProfile={(profile) => {
-                  setSelectedProfile(profile);
-                  setActiveView("replies");
+                  selectWorkspaceProfile(profile, "replies");
                 }}
-                profileGroups={profileGroups}
+                profileGroups={activeProfileGroups}
                 selectedAgentId={socialCronAgentId}
                 selectedProfile={selectedProfile}
               />
             ) : null}
             {activeView === "calendar" ? (
               <>
-                <CalendarSubNav agents={socialAgents} items={socialCalendarItems} />
+                <CalendarSubNav agents={socialAgents} items={activeSocialCalendarItems} />
                 <Separator />
                 <CronSubNav
                   agents={socialCronAgents}
                   busy={busy}
-                  jobs={socialCronJobs}
+                  jobs={activeSocialCronJobs}
                   llmOptions={hermesModelOptions.models}
                   onCreate={() => void createSocialCron()}
                   onSelectLlm={setSelectedLlmValue}
@@ -1338,11 +1702,11 @@ export function App() {
                   setTaskType={setSocialCronTaskType}
                   schedule={socialCronSchedule}
                   taskType={socialCronTaskType}
-                  taskTypes={socialCronTaskTypes}
+                  taskTypes={activeSocialCronTaskTypes}
                 />
               </>
             ) : null}
-            {activeView === "board" ? <BoardSubNav agents={socialAgents} tasks={socialBoardTasks} /> : null}
+            {activeView === "board" ? <BoardSubNav agents={socialAgents} tasks={activeSocialBoardTasks} /> : null}
             {activeView === "chat" ? (
               <ChatSubNav
                 activeRunId={activeChatRunId}
@@ -1350,12 +1714,14 @@ export function App() {
                 agents={socialAgents}
                 onDeleteSession={deleteChatSession}
                 onNewChat={resetChat}
-                onRenameSession={renameChatSession}
                 onSelectAgent={updateChatSessionAgent}
                 onSelectSession={selectChatSession}
                 selectedAgent={selectedSocialAgent}
                 sessions={chatSessionState.sessions}
               />
+            ) : null}
+            {activeView === "hermes" ? (
+              <HermesContextSubNav context={hermesContext} onSelectSession={selectHermesContextSession} />
             ) : null}
             {activeView === "skills" ? (
               <SkillsSubNav
@@ -1373,22 +1739,63 @@ export function App() {
         <main className="main-panel">
           <header className="topbar">
             <div>
-              <p className="text-xs font-medium text-muted-foreground">{topbarContext(activeView, selectedProfile)}</p>
-              <h2 className="text-xl font-semibold tracking-normal">{activeNavItem.label}</h2>
+              <p className="text-xs font-medium text-muted-foreground">{topbarEyebrow}</p>
+              {(activeView === "chat" || activeView === "knowledge") && activeChatSession ? (
+                <input
+                  aria-label={t("aria.sessionName")}
+                  className="topbar-title-input"
+                  onChange={(event) => renameChatSession(activeChatSession.id, event.target.value)}
+                  placeholder={t("common.newSession")}
+                  value={activeChatSession.title}
+                />
+              ) : (
+                <h2 className="text-xl font-semibold tracking-normal">{topbarTitle}</h2>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <StatusBadge state={xhsAuthBadgeState(auth)} label={xhsAuthBadgeLabel(auth)} />
+            <div className="topbar-actions">
+              <LanguageSwitcher locale={locale} localeOptions={localeOptions} onLocaleChange={setLocale} />
+              <ChatConnectionStatus className="topbar-connection-status" status={hermesChatStatus} />
+              <StatusBadge state={platformCliBadgeState(activePlatformInfo)} label={platformCliBadgeLabel(activePlatformInfo, t)} />
               <Button onClick={() => void refresh()} size="sm" type="button" variant="outline">
                 <RefreshCcw className="size-3.5" />
-                Refresh
+                {t("common.refresh")}
               </Button>
             </div>
           </header>
 
           <ScrollArea className="main-scroll">
-            <div className="main-content">
+            <div className={cn("main-content", activeView === "chat" && "main-content-chat", activeView === "knowledge" && "main-content-knowledge")}>
               {activeView === "workspace" ? (
                 <WorkspaceView selectedArtifact={selectedArtifact} selectedProfile={selectedProfile} />
+              ) : null}
+
+              {activeView === "knowledge" ? (
+                <KnowledgeView
+                  activeRunId={activeChatRunId}
+                  attachments={chatAttachments}
+                  composerMode={chatComposerMode}
+                  composerNotice={chatComposerNotice}
+                  draft={chatDraft}
+                  events={chatEvents}
+                  model={chatModel}
+                  onApprove={(runId, choice) => void approveChatRun(runId, choice)}
+                  onAttachFiles={(files) => void attachChatFiles(files)}
+                  onComposerModeChange={setChatComposerMode}
+                  onDraftChange={setChatDraft}
+                  onModelChange={setChatModel}
+                  onPermissionModeChange={setChatPermissionMode}
+                  onReasoningEffortChange={setChatReasoningEffort}
+                  onReferenceCurrent={() => referenceVaultArtifact()}
+                  onRemoveAttachment={removeChatAttachment}
+                  onSend={() => void sendChatMessage()}
+                  onStop={() => void stopChatRun()}
+                  permissionMode={chatPermissionMode}
+                  reasoningEffort={chatReasoningEffort}
+                  selectedAgent={selectedSocialAgent}
+                  selectedArtifact={selectedVaultArtifact}
+                  skills={hermesSkills}
+                  status={hermesChatStatus}
+                />
               ) : null}
 
               {activeView === "published" ? (
@@ -1430,16 +1837,29 @@ export function App() {
               {activeView === "calendar" ? (
                 <CalendarScheduleView
                   busy={busy}
-                  items={socialCalendarItems}
-                  jobs={socialCronJobs}
+                  items={activeSocialCalendarItems}
+                  jobs={activeSocialCronJobs}
                   onDelete={(job) => void deleteSocialCron(job)}
                   onRun={(job) => void runSocialCron(job)}
+                  onThisWeek={() => {
+                    setCalendarWeekWasChanged(true);
+                    setCalendarWeekStartDate(startOfWeek(new Date()));
+                  }}
                   onToggle={(job) => void toggleSocialCron(job)}
+                  onNextWeek={() => {
+                    setCalendarWeekWasChanged(true);
+                    setCalendarWeekStartDate((current) => addDays(current, 7));
+                  }}
+                  onPreviousWeek={() => {
+                    setCalendarWeekWasChanged(true);
+                    setCalendarWeekStartDate((current) => addDays(current, -7));
+                  }}
+                  weekStart={calendarWeekStartDate}
                 />
               ) : null}
 
               {activeView === "board" ? (
-                <BoardView busy={busy} onRun={(task) => void runSocialBoardTask(task)} tasks={socialBoardTasks} />
+                <BoardView busy={busy} onRun={(task) => void runSocialBoardTask(task)} tasks={activeSocialBoardTasks} />
               ) : null}
 
               {activeView === "chat" ? (
@@ -1466,6 +1886,15 @@ export function App() {
                   selectedAgent={selectedSocialAgent}
                   skills={hermesSkills}
                   status={hermesChatStatus}
+                />
+              ) : null}
+
+              {activeView === "hermes" ? (
+                <HermesContextView
+                  context={hermesContext}
+                  onRefresh={() => void reloadHermesContext()}
+                  onReference={referenceHermesContext}
+                  onSelectSession={selectHermesContextSession}
                 />
               ) : null}
 
@@ -1503,6 +1932,94 @@ export function App() {
   );
 }
 
+function LanguageSwitcher({
+  locale,
+  localeOptions,
+  onLocaleChange
+}: {
+  locale: I18nLocale;
+  localeOptions: I18nLocale[];
+  onLocaleChange: (locale: I18nLocale) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <Select onValueChange={(value) => onLocaleChange(value as I18nLocale)} value={locale}>
+      <SelectTrigger aria-label={t("language.label")} className="language-select" size="sm">
+        <Languages className="size-3.5" />
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        {localeOptions.map((option) => (
+          <SelectItem key={option} value={option}>
+            {languageLabel(option, t)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PlatformModeSwitcher({
+  activePlatform,
+  onSelect,
+  platforms
+}: {
+  activePlatform: SocialPlatformInfo;
+  onSelect: (platform: PlatformId) => void;
+  platforms: SocialPlatformInfo[];
+}) {
+  const { t } = useI18n();
+  return (
+    <DropdownMenuPrimitive.Root>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuPrimitive.Trigger asChild>
+            <button
+              aria-label={t("platform.switchModeCurrent", { platform: activePlatform.label })}
+              className="rail-mode-trigger"
+              type="button"
+            >
+              <PlatformLogo className="rail-mode-logo" platform={activePlatform} />
+              <ChevronDown className="rail-mode-chevron" />
+            </button>
+          </DropdownMenuPrimitive.Trigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">{t("platform.switchMode")}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuPrimitive.Portal>
+        <DropdownMenuPrimitive.Content align="start" className="mode-menu" side="right" sideOffset={8}>
+          {platforms.map((platform) => (
+            <DropdownMenuPrimitive.Item
+              className="mode-menu-item"
+              key={platform.id}
+              onSelect={() => onSelect(platform.id)}
+              textValue={platform.label}
+            >
+              <span className="mode-menu-mark">
+                <PlatformLogo platform={platform} />
+              </span>
+              <span className="mode-menu-copy">
+                <span>{platform.label}</span>
+                <small>{platformCliDetail(platform, t)}</small>
+              </span>
+              {platform.id === activePlatform.id ? <CheckCircle2 className="mode-menu-check" /> : null}
+            </DropdownMenuPrimitive.Item>
+          ))}
+        </DropdownMenuPrimitive.Content>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  );
+}
+
+function PlatformLogo({ className, platform }: { className?: string; platform: SocialPlatformInfo }) {
+  const [failed, setFailed] = useState(false);
+  const src = platformLogoSrc(platform.id);
+  if (!src || failed) {
+    return <span className={cn("platform-logo-fallback", className)}>{platform.shortLabel}</span>;
+  }
+  return <img alt="" className={cn("platform-logo", className)} onError={() => setFailed(true)} src={src} />;
+}
+
 function WorkspaceSubNav({
   artifacts,
   expandedDirectories,
@@ -1522,9 +2039,10 @@ function WorkspaceSubNav({
   selectedArtifact: ArtifactContent | null;
   selectedProfile: WorkspaceProfile | null;
 }) {
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Folder} label="Workspaces" />
+      <SectionLabel icon={Folder} label={t("section.workspaces")} />
       {Object.entries(profileGroups).map(([platform, items]) => (
         <div className="space-y-1" key={platform}>
           <p className="sub-nav-group-label">{platformLabel[platform] ?? platform}</p>
@@ -1541,11 +2059,11 @@ function WorkspaceSubNav({
           ))}
         </div>
       ))}
-      {!Object.keys(profileGroups).length ? <EmptyCompact label="No profiles" /> : null}
+      {!Object.keys(profileGroups).length ? <EmptyCompact label={t("empty.noProfiles")} /> : null}
 
       <Separator />
 
-      <SectionLabel icon={FileText} label="Artifacts" />
+      <SectionLabel icon={FileText} label={t("section.artifacts")} />
       <div className="space-y-1">
         {artifacts.map(({ node, depth }) => {
           const artifact = node.artifact;
@@ -1578,8 +2096,163 @@ function WorkspaceSubNav({
           );
         })}
       </div>
-      {!artifacts.length ? <EmptyCompact label="No artifacts" /> : null}
+      {!artifacts.length ? <EmptyCompact label={t("empty.noArtifacts")} /> : null}
     </div>
+  );
+}
+
+function KnowledgeSubNav({
+  activeRunId,
+  activeSession,
+  agents,
+  artifacts,
+  expandedDirectories,
+  onDeleteSession,
+  onNewChat,
+  onOpenArtifact,
+  onReferenceCurrent,
+  onSelectAgent,
+  onSelectSession,
+  onTabChange,
+  onToggleDirectory,
+  selectedAgent,
+  selectedArtifact,
+  sessions,
+  tab
+}: {
+  activeRunId: string | null;
+  activeSession?: ChatSession;
+  agents: SocialAgent[];
+  artifacts: ArtifactTreeRow[];
+  expandedDirectories: Set<string>;
+  onDeleteSession: (sessionId: string) => void;
+  onNewChat: () => void;
+  onOpenArtifact: (artifact: ArtifactInfo) => void;
+  onReferenceCurrent: () => void;
+  onSelectAgent: (agentId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  onTabChange: (tab: KnowledgeSubNavTab) => void;
+  onToggleDirectory: (path: string) => void;
+  selectedAgent?: SocialAgent;
+  selectedArtifact: ArtifactContent | null;
+  sessions: ChatSession[];
+  tab: KnowledgeSubNavTab;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="sub-nav-body">
+      <div className="sub-nav-tabs" role="tablist" aria-label={t("aria.subNavigation", { label: t("nav.knowledge") })}>
+        <button
+          aria-selected={tab === "explorer"}
+          className={cn("sub-nav-tab", tab === "explorer" && "sub-nav-tab-active")}
+          onClick={() => onTabChange("explorer")}
+          role="tab"
+          type="button"
+        >
+          <Folder className="size-3.5" />
+          {t("knowledge.tabs.explorer")}
+        </button>
+        <button
+          aria-selected={tab === "sessions"}
+          className={cn("sub-nav-tab", tab === "sessions" && "sub-nav-tab-active")}
+          onClick={() => onTabChange("sessions")}
+          role="tab"
+          type="button"
+        >
+          <Archive className="size-3.5" />
+          {t("knowledge.tabs.sessions")}
+        </button>
+      </div>
+
+      {tab === "explorer" ? (
+        <VaultExplorerPanel
+          artifacts={artifacts}
+          expandedDirectories={expandedDirectories}
+          onOpenArtifact={onOpenArtifact}
+          onReferenceCurrent={onReferenceCurrent}
+          onToggleDirectory={onToggleDirectory}
+          selectedArtifact={selectedArtifact}
+        />
+      ) : (
+        <ChatSessionsPanel
+          activeRunId={activeRunId}
+          activeSession={activeSession}
+          agents={agents}
+          onDeleteSession={onDeleteSession}
+          onNewChat={onNewChat}
+          onSelectAgent={onSelectAgent}
+          onSelectSession={onSelectSession}
+          selectedAgent={selectedAgent}
+          sessions={sessions}
+        />
+      )}
+    </div>
+  );
+}
+
+function VaultExplorerPanel({
+  artifacts,
+  expandedDirectories,
+  onOpenArtifact,
+  onReferenceCurrent,
+  onToggleDirectory,
+  selectedArtifact
+}: {
+  artifacts: ArtifactTreeRow[];
+  expandedDirectories: Set<string>;
+  onOpenArtifact: (artifact: ArtifactInfo) => void;
+  onReferenceCurrent: () => void;
+  onToggleDirectory: (path: string) => void;
+  selectedArtifact: ArtifactContent | null;
+}) {
+  const { t } = useI18n();
+  return (
+    <>
+      <SectionLabel icon={Bookmark} label={t("section.vault")} />
+      <MetricRow label={t("section.root")} value={vaultWorkspaceRoot} />
+      <MetricRow label={t("section.files")} value={String(artifacts.filter(({ node }) => node.artifact.kind === "file").length)} />
+      <Button className="w-full justify-start" disabled={!selectedArtifact?.content} onClick={onReferenceCurrent} type="button" variant="outline">
+        <FileText className="size-3.5" />
+        {t("knowledge.referenceCurrentNote")}
+      </Button>
+
+      <Separator />
+
+      <SectionLabel icon={Folder} label={t("section.explorer")} />
+      <div className="space-y-1">
+        {artifacts.map(({ node, depth }) => {
+          const artifact = node.artifact;
+          const isDirectory = artifact.kind === "directory";
+          const isExpanded = isDirectory && expandedDirectories.has(artifact.path);
+          const isSelected = selectedArtifact?.artifact.path === artifact.path;
+          const ArtifactIcon = isDirectory ? Folder : artifact.mime === "image" ? ImageIcon : artifact.mime === "video" ? Video : FileText;
+          return (
+            <button
+              aria-expanded={isDirectory ? isExpanded : undefined}
+              className={cn("artifact-nav-row", isSelected && "sub-nav-row-active")}
+              key={artifact.path}
+              onClick={() => (isDirectory ? onToggleDirectory(artifact.path) : onOpenArtifact(artifact))}
+              style={{ paddingLeft: 8 + depth * 14 }}
+              title={artifact.path}
+              type="button"
+            >
+              {isDirectory ? (
+                isExpanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )
+              ) : (
+                <span className="size-3.5 shrink-0" />
+              )}
+              <ArtifactIcon className="size-3.5 shrink-0" />
+              <span className="truncate">{artifact.name}</span>
+            </button>
+          );
+        })}
+      </div>
+      {!artifacts.length ? <EmptyCompact label={t("empty.noVaultFiles")} /> : null}
+    </>
   );
 }
 
@@ -1594,6 +2267,7 @@ function PublishedPostsSubNav({
   profileGroups: Record<string, WorkspaceProfile[]>;
   selectedProfile: WorkspaceProfile | null;
 }) {
+  const { t } = useI18n();
   const xhsProfiles = profileGroups.xiaohongshu ?? [];
   const totalEngagement = posts.reduce(
     (sum, post) => sum + (post.stats.likes ?? 0) + (post.stats.collects ?? 0) + (post.stats.comments ?? 0),
@@ -1601,7 +2275,7 @@ function PublishedPostsSubNav({
   );
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={ImageIcon} label="XHS profiles" />
+      <SectionLabel icon={ImageIcon} label={t("section.xhsProfiles")} />
       {xhsProfiles.map((profile) => (
         <button
           className={cn("sub-nav-row", isSelectedWorkspace(selectedProfile, profile) && "sub-nav-row-active")}
@@ -1613,15 +2287,15 @@ function PublishedPostsSubNav({
           <Badge variant="outline">{profile.artifactCount}</Badge>
         </button>
       ))}
-      {!xhsProfiles.length ? <EmptyCompact label="No XHS profiles" /> : null}
+      {!xhsProfiles.length ? <EmptyCompact label={t("empty.noXhsProfiles")} /> : null}
 
       <Separator />
 
-      <SectionLabel icon={Gauge} label="Published" />
-      <MetricRow label="Posts" value={String(posts.length)} />
-      <MetricRow label="Engagement" value={formatCompactNumber(totalEngagement)} />
-      <MetricRow label="Needs review" value={String(posts.filter((post) => post.status === "needs-review").length)} />
-      <MetricRow label="Archived" value={String(posts.filter((post) => post.status === "archived").length)} />
+      <SectionLabel icon={Gauge} label={t("section.published")} />
+      <MetricRow label={t("section.posts")} value={String(posts.length)} />
+      <MetricRow label={t("section.engagement")} value={formatCompactNumber(totalEngagement)} />
+      <MetricRow label={t("section.needsReview")} value={String(posts.filter((post) => post.status === "needs-review").length)} />
+      <MetricRow label={t("section.archived")} value={String(posts.filter((post) => post.status === "archived").length)} />
     </div>
   );
 }
@@ -1643,10 +2317,11 @@ function AutoRepliesSubNav({
   selectedAgentId: string;
   selectedProfile: WorkspaceProfile | null;
 }) {
+  const { t } = useI18n();
   const xhsProfiles = profileGroups.xiaohongshu ?? [];
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Reply} label="XHS profiles" />
+      <SectionLabel icon={Reply} label={t("section.xhsProfiles")} />
       {xhsProfiles.map((profile) => (
         <button
           className={cn("sub-nav-row", isSelectedWorkspace(selectedProfile, profile) && "sub-nav-row-active")}
@@ -1658,14 +2333,14 @@ function AutoRepliesSubNav({
           <Badge variant="outline">{profile.artifactCount}</Badge>
         </button>
       ))}
-      {!xhsProfiles.length ? <EmptyCompact label="No XHS profiles" /> : null}
+      {!xhsProfiles.length ? <EmptyCompact label={t("empty.noXhsProfiles")} /> : null}
 
       <Separator />
 
-      <SectionLabel icon={Bot} label="Agent" />
+      <SectionLabel icon={Bot} label={t("section.agent")} />
       <Select disabled={!agents.length} onValueChange={onSelectAgent} value={selectedAgentId}>
         <SelectTrigger className="w-full">
-          <SelectValue placeholder="Agent" />
+          <SelectValue placeholder={t("common.agent")} />
         </SelectTrigger>
         <SelectContent>
           {agents.map((agent) => (
@@ -1678,39 +2353,41 @@ function AutoRepliesSubNav({
 
       <Separator />
 
-      <SectionLabel icon={Gauge} label="Queue" />
-      <MetricRow label="Pending" value={String(items.filter((item) => item.status === "pending").length)} />
-      <MetricRow label="Drafted" value={String(items.filter((item) => item.status === "drafted").length)} />
-      <MetricRow label="Needs review" value={String(items.filter((item) => item.status === "needs-review").length)} />
-      <MetricRow label="Sent" value={String(items.filter((item) => item.status === "sent").length)} />
+      <SectionLabel icon={Gauge} label={t("section.queue")} />
+      <MetricRow label={t("section.pending")} value={String(items.filter((item) => item.status === "pending").length)} />
+      <MetricRow label={t("section.drafted")} value={String(items.filter((item) => item.status === "drafted").length)} />
+      <MetricRow label={t("section.needsReview")} value={String(items.filter((item) => item.status === "needs-review").length)} />
+      <MetricRow label={t("section.sent")} value={String(items.filter((item) => item.status === "sent").length)} />
     </div>
   );
 }
 
 function CalendarSubNav({ agents, items }: { agents: SocialAgent[]; items: SocialTaskCalendarItem[] }) {
+  const { t } = useI18n();
   const scheduled = items.filter((item) => item.source === "cron").length;
   const board = items.filter((item) => item.source === "board").length;
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={CalendarClock} label="Queue" />
-      <MetricRow label="Scheduled" value={String(scheduled)} />
-      <MetricRow label="Board" value={String(board)} />
+      <SectionLabel icon={CalendarClock} label={t("section.queue")} />
+      <MetricRow label={t("section.scheduled")} value={String(scheduled)} />
+      <MetricRow label={t("section.board")} value={String(board)} />
       <Separator />
-      <SectionLabel icon={Bot} label="Agents" />
+      <SectionLabel icon={Bot} label={t("section.agents")} />
       <AgentList agents={agents} />
     </div>
   );
 }
 
 function BoardSubNav({ agents, tasks }: { agents: SocialAgent[]; tasks: SocialBoardTask[] }) {
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Gauge} label="Lanes" />
+      <SectionLabel icon={Gauge} label={t("section.lanes")} />
       {boardStatuses.map((status) => (
-        <MetricRow key={status} label={status} value={String(tasks.filter((task) => task.status === status).length)} />
+        <MetricRow key={status} label={t(boardStatusLabelKey[status])} value={String(tasks.filter((task) => task.status === status).length)} />
       ))}
       <Separator />
-      <SectionLabel icon={Bot} label="Agents" />
+      <SectionLabel icon={Bot} label={t("section.agents")} />
       <AgentList agents={agents} />
     </div>
   );
@@ -1729,11 +2406,12 @@ function LlmModelSelect({
   triggerClassName?: string;
   value: string;
 }) {
+  const { t } = useI18n();
   return (
     <Select disabled={disabled || !options.length} onValueChange={onChange} value={value}>
       <SelectTrigger className={triggerClassName ?? "w-full"}>
         <Zap className="size-3.5" />
-        <SelectValue placeholder="LLM model" />
+        <SelectValue placeholder={t("cron.llmModel")} />
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
@@ -1779,13 +2457,14 @@ function CronSubNav({
   taskType: SocialCronTaskType;
   taskTypes: SocialCronTaskType[];
 }) {
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={CalendarClock} label="New schedule" />
+      <SectionLabel icon={CalendarClock} label={t("section.newSchedule")} />
       <div className="space-y-2">
         <Select onValueChange={setSelectedAgentId} value={selectedAgentId}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Agent" />
+            <SelectValue placeholder={t("common.agent")} />
           </SelectTrigger>
           <SelectContent>
             {agents.map((agentId) => (
@@ -1795,14 +2474,14 @@ function CronSubNav({
             ))}
           </SelectContent>
         </Select>
-        <Select onValueChange={(value) => setTaskType(value as SocialCronTaskType)} value={taskType}>
+        <Select disabled={!taskTypes.length} onValueChange={(value) => setTaskType(value as SocialCronTaskType)} value={taskType}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder="Task" />
           </SelectTrigger>
           <SelectContent>
             {taskTypes.map((nextTaskType) => (
               <SelectItem key={nextTaskType} value={nextTaskType}>
-                {socialCronTaskLabel[nextTaskType]}
+                {t(socialCronTaskLabelKey[nextTaskType])}
               </SelectItem>
             ))}
           </SelectContent>
@@ -1814,20 +2493,21 @@ function CronSubNav({
           value={selectedLlmValue}
         />
         <Input onChange={(event) => setSchedule(event.target.value)} placeholder="daily 09:00" value={schedule} />
-        <Button className="w-full" disabled={!selectedProfile || busy === "social-cron-create"} onClick={onCreate} type="button">
+        <Button className="w-full" disabled={!selectedProfile || !taskTypes.length || busy === "social-cron-create"} onClick={onCreate} type="button">
           {busy === "social-cron-create" ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
-          Schedule
+          {t("common.schedule")}
         </Button>
+        {!taskTypes.length ? <EmptyCompact label={t("empty.noCliTasks")} /> : null}
       </div>
       <Separator />
-      <SectionLabel icon={RefreshCcw} label="Jobs" />
+      <SectionLabel icon={RefreshCcw} label={t("section.jobs")} />
       {jobs.map((job) => (
         <button className="sub-nav-row" key={job.id} title={job.name} type="button">
           <span className="truncate">{job.name}</span>
           <StatusBadge state={job.enabled ? "ok" : "warn"} label={job.llm?.model ?? (job.enabled ? "on" : "off")} />
         </button>
       ))}
-      {!jobs.length ? <EmptyCompact label="No cron jobs" /> : null}
+      {!jobs.length ? <EmptyCompact label={t("empty.noCronJobs")} /> : null}
     </div>
   );
 }
@@ -1838,7 +2518,6 @@ function ChatSubNav({
   agents,
   onDeleteSession,
   onNewChat,
-  onRenameSession,
   onSelectAgent,
   onSelectSession,
   selectedAgent,
@@ -1849,60 +2528,77 @@ function ChatSubNav({
   agents: SocialAgent[];
   onDeleteSession: (sessionId: string) => void;
   onNewChat: () => void;
-  onRenameSession: (sessionId: string, title: string) => void;
   onSelectAgent: (agentId: string) => void;
   onSelectSession: (sessionId: string) => void;
   selectedAgent?: SocialAgent;
   sessions: ChatSession[];
 }) {
-  const activeMessageCount = activeSession ? countChatSessionMessages(activeSession) : 0;
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={MessageSquare} label="Session management" />
+      <ChatSessionsPanel
+        activeRunId={activeRunId}
+        activeSession={activeSession}
+        agents={agents}
+        onDeleteSession={onDeleteSession}
+        onNewChat={onNewChat}
+        onSelectAgent={onSelectAgent}
+        onSelectSession={onSelectSession}
+        selectedAgent={selectedAgent}
+        sessions={sessions}
+      />
+    </div>
+  );
+}
+
+function ChatSessionsPanel({
+  activeRunId,
+  activeSession,
+  agents,
+  onDeleteSession,
+  onNewChat,
+  onSelectAgent,
+  onSelectSession,
+  selectedAgent,
+  sessions
+}: {
+  activeRunId: string | null;
+  activeSession?: ChatSession;
+  agents: SocialAgent[];
+  onDeleteSession: (sessionId: string) => void;
+  onNewChat: () => void;
+  onSelectAgent: (agentId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  selectedAgent?: SocialAgent;
+  sessions: ChatSession[];
+}) {
+  const { t } = useI18n();
+  return (
+    <>
       <Button className="w-full justify-start" disabled={Boolean(activeRunId)} onClick={onNewChat} type="button" variant="outline">
         <Plus className="size-3.5" />
-        New session
+        {t("common.newSession")}
       </Button>
 
-      {activeSession ? (
-        <div className="chat-session-editor">
-          <label htmlFor="chat-session-name">Session name</label>
-          <Input
-            id="chat-session-name"
-            onChange={(event) => onRenameSession(activeSession.id, event.target.value)}
-            placeholder={chatDefaultSessionTitle}
-            value={activeSession.title}
-          />
-          <div className="chat-session-meta">
-            <span title={activeSession.id}>{activeSession.id}</span>
-            <Badge variant="outline">{activeRunId ? "running" : "active"}</Badge>
-          </div>
+      {agents.length > 1 ? (
+        <div className="chat-session-agent">
+          <span>{t("common.agent")}</span>
+          <Select disabled={Boolean(activeRunId)} onValueChange={onSelectAgent} value={selectedAgent?.id}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder={t("common.selectAgent")} />
+            </SelectTrigger>
+            <SelectContent>
+              {agents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      ) : (
-        <EmptyCompact label="No active session" />
-      )}
+      ) : null}
 
-      <div className="chat-session-agent">
-        <span>Agent</span>
-        <Select disabled={!agents.length || Boolean(activeRunId)} onValueChange={onSelectAgent} value={selectedAgent?.id}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select agent" />
-          </SelectTrigger>
-          <SelectContent>
-            {agents.map((agent) => (
-              <SelectItem key={agent.id} value={agent.id}>
-                {agent.id}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <MetricRow label="Sessions" value={String(sessions.length)} />
-      <MetricRow label="Messages" value={String(activeMessageCount)} />
-      <MetricRow label="Updated" value={activeSession ? formatChatSessionTime(activeSession.updatedAt) : "never"} />
-      <Separator />
-      <SectionLabel icon={Archive} label="Sessions" />
+      <SectionLabel icon={Archive} label={t("section.sessions")} />
       <div className="chat-session-list">
         {sessions.map((session) => {
           const isActive = activeSession?.id === session.id;
@@ -1915,11 +2611,11 @@ function ChatSubNav({
                 onClick={() => onSelectSession(session.id)}
                 type="button"
               >
-                <span>{displayChatSessionTitle(session)}</span>
-                <small>{formatChatSessionSummary(session)}</small>
+                <span>{displayChatSessionTitle(session, t)}</span>
               </button>
               <Button
-                aria-label={`Delete ${displayChatSessionTitle(session)}`}
+                aria-label={`${t("common.delete")} ${displayChatSessionTitle(session, t)}`}
+                className="chat-session-delete"
                 disabled={Boolean(activeRunId)}
                 onClick={() => onDeleteSession(session.id)}
                 size="icon-xs"
@@ -1932,7 +2628,42 @@ function ChatSubNav({
           );
         })}
       </div>
-      {!sessions.length ? <EmptyCompact label="No sessions" /> : null}
+      {!sessions.length ? <EmptyCompact label={t("empty.noSessions")} /> : null}
+    </>
+  );
+}
+
+function HermesContextSubNav({
+  context,
+  onSelectSession
+}: {
+  context: HermesContextSnapshot | null;
+  onSelectSession: (sessionId: string) => void;
+}) {
+  const { locale, t } = useI18n();
+  return (
+    <div className="sub-nav-body">
+      <SectionLabel icon={Activity} label={t("section.hermesSessions")} />
+      <MetricRow label={t("hermes.stateDb")} value={context?.available.stateDb ? t("common.ready") : t("common.missing")} />
+      <MetricRow label={t("hermes.gatewayLog")} value={context?.available.gatewayLog ? t("common.ready") : t("common.missing")} />
+      <Separator />
+      {context?.sessions.length ? (
+        context.sessions.map((session) => (
+          <button
+            className={cn("sub-nav-row", context.selectedSessionId === session.id && "sub-nav-row-active")}
+            key={session.id}
+            onClick={() => onSelectSession(session.id)}
+            title={session.id}
+            type="button"
+          >
+            <span className="truncate">{session.id}</span>
+            <StatusBadge state={session.endReason ? "warn" : "ok"} label={session.source} />
+          </button>
+        ))
+      ) : (
+        <EmptyCompact label={t("empty.noHermesContext")} />
+      )}
+      {context?.generatedAt ? <MetricRow label={t("section.latest")} value={formatDateTime(context.generatedAt, locale)} /> : null}
     </div>
   );
 }
@@ -1948,63 +2679,190 @@ function SkillsSubNav({
   selectedAgent?: SocialAgent;
   skills: HermesSkillInfo[];
 }) {
+  const { t } = useI18n();
   const enabled = skills.filter((skill) => skill.enabled).length;
   const categories = new Set(skills.map((skill) => skill.category || "uncategorized")).size;
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Bot} label="Agents" />
+      <SectionLabel icon={Bot} label={t("section.agents")} />
       <AgentList agents={agents} onSelectAgent={onSelectAgent} selectedAgent={selectedAgent} />
       <Separator />
-      <SectionLabel icon={Gauge} label="Inventory" />
-      <MetricRow label="Enabled" value={String(enabled)} />
-      <MetricRow label="Disabled" value={String(skills.length - enabled)} />
-      <MetricRow label="Categories" value={String(categories)} />
+      <SectionLabel icon={Gauge} label={t("section.inventory")} />
+      <MetricRow label={t("common.enabled")} value={String(enabled)} />
+      <MetricRow label={t("common.disabled")} value={String(skills.length - enabled)} />
+      <MetricRow label={t("common.categories")} value={String(categories)} />
     </div>
   );
 }
 
 function JobsSubNav({ job }: { job: JobSnapshot | null }) {
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Terminal} label="Latest" />
+      <SectionLabel icon={Terminal} label={t("section.latest")} />
       {job ? (
         <>
-          <MetricRow label="Status" value={job.status} />
-          <MetricRow label="Type" value={job.type} />
-          <MetricRow label="Logs" value={String(job.logs.length)} />
+          <MetricRow label={t("common.status")} value={job.status} />
+          <MetricRow label={t("common.type")} value={job.type} />
+          <MetricRow label={t("common.logs")} value={String(job.logs.length)} />
         </>
       ) : (
-        <EmptyCompact label="No active job" />
+        <EmptyCompact label={t("empty.noActiveJob")} />
       )}
     </div>
   );
 }
 
 function SetupSubNav({ auth, hermes, openclaw }: { auth: XhsAuthStatus | null; hermes?: RuntimeStatus; openclaw?: RuntimeStatus }) {
+  const { t } = useI18n();
   return (
     <div className="sub-nav-body">
-      <SectionLabel icon={Activity} label="Runtimes" />
+      <SectionLabel icon={Activity} label={t("section.runtimes")} />
       <RuntimeLine runtime={hermes} label="Hermes" />
       <RuntimeLine runtime={openclaw} label="OpenClaw" />
       <Separator />
       <SectionLabel icon={KeyRound} label="XHS CLI" />
-      <MetricRow label="Installed" value={auth?.installed ? "yes" : "no"} />
-      <MetricRow label="Scope" value={auth?.scope ?? "global"} />
-      <MetricRow label="State" value={xhsAuthStateValue(auth)} />
-      <MetricRow label="Signed in" value={xhsSignedInValue(auth)} />
-      <MetricRow label="Account" value={xhsAccountValue(auth)} />
+      <MetricRow label={t("setup.installed")} value={auth?.installed ? t("common.yes") : t("common.no")} />
+      <MetricRow label={t("setup.scope")} value={auth?.scope ?? t("common.global")} />
+      <MetricRow label={t("setup.state")} value={xhsAuthStateValue(auth, t)} />
+      <MetricRow label={t("setup.signedIn")} value={xhsSignedInValue(auth, t)} />
+      <MetricRow label={t("setup.account")} value={xhsAccountValue(auth, t)} />
+    </div>
+  );
+}
+
+function KnowledgeView({
+  activeRunId,
+  attachments,
+  composerMode,
+  composerNotice,
+  draft,
+  events,
+  model,
+  onApprove,
+  onAttachFiles,
+  onComposerModeChange,
+  onDraftChange,
+  onModelChange,
+  onPermissionModeChange,
+  onReasoningEffortChange,
+  onReferenceCurrent,
+  onRemoveAttachment,
+  onSend,
+  onStop,
+  permissionMode,
+  reasoningEffort,
+  selectedAgent,
+  selectedArtifact,
+  skills,
+  status
+}: {
+  activeRunId: string | null;
+  attachments: ChatAttachment[];
+  composerMode: ChatComposerMode;
+  composerNotice: string | null;
+  draft: string;
+  events: HermesChatEvent[];
+  model: string;
+  onApprove: (runId: string, choice: string) => void;
+  onAttachFiles: (files: FileList | null) => void;
+  onComposerModeChange: (mode: ChatComposerMode) => void;
+  onDraftChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onPermissionModeChange: (value: ChatPermissionMode) => void;
+  onReasoningEffortChange: (value: ChatReasoningEffort) => void;
+  onReferenceCurrent: () => void;
+  onRemoveAttachment: (id: string) => void;
+  onSend: () => void;
+  onStop: () => void;
+  permissionMode: ChatPermissionMode;
+  reasoningEffort: ChatReasoningEffort;
+  selectedAgent?: SocialAgent;
+  selectedArtifact: ArtifactContent | null;
+  skills: HermesSkillInfo[];
+  status: HermesChatStatus | null;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="knowledge-workbench">
+      <section className="knowledge-chat-pane" aria-label={t("knowledge.vaultAgentChat")}>
+        <ChatView
+          activeRunId={activeRunId}
+          attachments={attachments}
+          composerMode={composerMode}
+          composerNotice={composerNotice}
+          draft={draft}
+          events={events}
+          model={model}
+          onApprove={onApprove}
+          onAttachFiles={onAttachFiles}
+          onComposerModeChange={onComposerModeChange}
+          onDraftChange={onDraftChange}
+          onModelChange={onModelChange}
+          onPermissionModeChange={onPermissionModeChange}
+          onReasoningEffortChange={onReasoningEffortChange}
+          onRemoveAttachment={onRemoveAttachment}
+          onSend={onSend}
+          onStop={onStop}
+          permissionMode={permissionMode}
+          reasoningEffort={reasoningEffort}
+          selectedAgent={selectedAgent}
+          skills={skills}
+          status={status}
+        />
+      </section>
+      <section className="knowledge-preview-pane" aria-label={t("knowledge.vaultMarkdownPreview")}>
+        <Card className="knowledge-preview-card">
+          <CardHeader className="knowledge-preview-header">
+            <div className="min-w-0">
+              <CardTitle>{selectedArtifact?.artifact.path ?? t("knowledge.vaultPreview")}</CardTitle>
+              <CardDescription>
+                {selectedArtifact
+                  ? `${selectedArtifact.artifact.mime} / ${formatBytes(selectedArtifact.artifact.size)}`
+                  : t("empty.selectVaultNote")}
+              </CardDescription>
+            </div>
+            <Button disabled={!selectedArtifact?.content} onClick={onReferenceCurrent} size="sm" type="button" variant="outline">
+              <FileText className="size-3.5" />
+              {t("knowledge.reference")}
+            </Button>
+          </CardHeader>
+          <CardContent className="knowledge-preview-content">
+            {selectedArtifact ? (
+              selectedArtifact.artifact.mime === "markdown" ? (
+                <MarkdownPreview artifact={selectedArtifact.artifact} content={selectedArtifact.content ?? ""} />
+              ) : selectedArtifact.artifact.mime === "image" ? (
+                <div className="artifact-preview">
+                  <img alt={selectedArtifact.artifact.name} src={artifactPreviewUrl(selectedArtifact.artifact)} />
+                </div>
+              ) : selectedArtifact.artifact.mime === "video" ? (
+                <div className="artifact-preview">
+                  <video controls key={selectedArtifact.artifact.path} preload="metadata" src={artifactPreviewUrl(selectedArtifact.artifact)} />
+                </div>
+              ) : selectedArtifact.binary ? (
+                <div className="empty-state">{t("empty.previewUnavailable")}</div>
+              ) : (
+                <pre>{selectedArtifact.content}</pre>
+              )
+            ) : (
+              <div className="empty-state">{t("empty.noVaultNoteSelected")}</div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }
 
 function WorkspaceView({ selectedArtifact, selectedProfile }: { selectedArtifact: ArtifactContent | null; selectedProfile: WorkspaceProfile | null }) {
+  const { t } = useI18n();
   return (
     <div className="workspace-view">
       <Card className="workspace-card">
         <CardHeader className="border-b">
-          <CardTitle>{selectedArtifact?.artifact.path ?? selectedProfile?.profile ?? "Workspace"}</CardTitle>
+          <CardTitle>{selectedArtifact?.artifact.path ?? selectedProfile?.profile ?? t("workspace.title")}</CardTitle>
           <CardDescription>
-            {selectedArtifact ? `${selectedArtifact.artifact.mime} / ${formatBytes(selectedArtifact.artifact.size)}` : "Select an artifact from sub-nav"}
+            {selectedArtifact ? `${selectedArtifact.artifact.mime} / ${formatBytes(selectedArtifact.artifact.size)}` : t("empty.selectArtifactFromSubNav")}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -2020,12 +2878,12 @@ function WorkspaceView({ selectedArtifact, selectedProfile }: { selectedArtifact
                 <video controls key={selectedArtifact.artifact.path} preload="metadata" src={artifactPreviewUrl(selectedArtifact.artifact)} />
               </div>
             ) : selectedArtifact.binary ? (
-              <div className="empty-state">Preview unavailable.</div>
+              <div className="empty-state">{t("empty.previewUnavailable")}</div>
             ) : (
               <pre>{selectedArtifact.content}</pre>
             )
           ) : (
-            <div className="empty-state">No artifact selected.</div>
+            <div className="empty-state">{t("empty.noArtifactSelected")}</div>
           )}
         </CardContent>
       </Card>
@@ -2083,6 +2941,7 @@ function PublishedPostsView({
   selectedProfile: WorkspaceProfile | null;
   statusFilter: XhsPublishedPostStatus | "all";
 }) {
+  const { t } = useI18n();
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = posts.filter((post) => {
     const matchesStatus = statusFilter === "all" || post.status === statusFilter;
@@ -2095,33 +2954,33 @@ function PublishedPostsView({
   const visible = filtered.filter((post) => post.status !== "archived" || statusFilter === "archived");
 
   return (
-    <section className="published-shell" aria-label="Published Xiaohongshu posts">
+    <section className="published-shell" aria-label={t("nav.published")}>
       <div className="published-toolbar">
         <div className="published-toolbar-title">
-          <p>{selectedProfile ? `xiaohongshu/${selectedProfile.profile}` : "No XHS profile selected"}</p>
-          <h3>已发布推文</h3>
+          <p>{selectedProfile ? `xiaohongshu/${selectedProfile.profile}` : t("published.noProfile")}</p>
+          <h3>{t("published.title")}</h3>
         </div>
         <div className="published-toolbar-actions">
           <div className="published-search">
             <Search className="size-3.5" />
-            <Input onChange={(event) => onSearchChange(event.target.value)} placeholder="搜索标题、关键词、备注" value={search} />
+            <Input onChange={(event) => onSearchChange(event.target.value)} placeholder={t("published.searchPlaceholder")} value={search} />
           </div>
           <Select onValueChange={(value) => onStatusFilterChange(value as XhsPublishedPostStatus | "all")} value={statusFilter}>
-            <SelectTrigger aria-label="Status filter" className="published-status-filter" size="sm">
+            <SelectTrigger aria-label={t("aria.statusFilter")} className="published-status-filter" size="sm">
               <SlidersHorizontal className="size-3.5" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {publishedPostStatusOptions.map((option) => (
                 <SelectItem key={option} value={option}>
-                  {option === "all" ? "全部状态" : publishedPostStatusLabel[option]}
+                  {option === "all" ? t("published.allStatus") : t(publishedPostStatusLabelKey[option])}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Button disabled={!selectedProfile || busy === "published-sync"} onClick={onSync} size="sm" type="button" variant="outline">
             {busy === "published-sync" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
-            同步
+            {t("published.sync")}
           </Button>
         </div>
       </div>
@@ -2137,7 +2996,7 @@ function PublishedPostsView({
       ) : (
         <div className="published-empty">
           <ImageIcon className="size-6" />
-          <span>{posts.length ? "没有匹配的推文。" : "还没有已发布推文记录。可从 xhs my-notes 同步，或在 metrics.csv 记录数据。"}</span>
+          <span>{posts.length ? t("published.noMatches") : t("published.noRecords")}</span>
         </div>
       )}
     </section>
@@ -2155,6 +3014,7 @@ function PublishedPostCard({
   onUpdate: (post: XhsPublishedPost, patch: { status?: XhsPublishedPostStatus; statusNote?: string; keyword?: string }) => void;
   post: XhsPublishedPost;
 }) {
+  const { locale, t } = useI18n();
   const engagement = (post.stats.likes ?? 0) + (post.stats.collects ?? 0) + (post.stats.comments ?? 0);
   return (
     <article className={cn("published-note-card", post.status === "archived" && "published-note-card-muted")}>
@@ -2167,8 +3027,8 @@ function PublishedPostCard({
           </div>
         )}
         <div className="published-note-cover-top">
-          <StatusBadge state={publishedStatusState(post.status)} label={publishedPostStatusLabel[post.status]} />
-          {post.contentType === "video" ? <Badge variant="secondary">视频</Badge> : null}
+          <StatusBadge state={publishedStatusState(post.status)} label={t(publishedPostStatusLabelKey[post.status])} />
+          {post.contentType === "video" ? <Badge variant="secondary">{t("published.video")}</Badge> : null}
         </div>
       </div>
 
@@ -2176,7 +3036,7 @@ function PublishedPostCard({
         <div className="published-note-title-row">
           <h4 title={post.title}>{post.title}</h4>
           {post.url ? (
-            <a aria-label="Open Xiaohongshu post" className="published-note-link" href={post.url} rel="noreferrer" target="_blank">
+            <a aria-label={t("published.openPost")} className="published-note-link" href={post.url} rel="noreferrer" target="_blank">
               <ExternalLink className="size-3.5" />
             </a>
           ) : null}
@@ -2186,33 +3046,33 @@ function PublishedPostCard({
             {post.authorAvatarUrl ? <img alt="" src={post.authorAvatarUrl} /> : <span className="published-author-dot" />}
             <span>{post.authorName ?? post.profile}</span>
           </span>
-          <span>{formatPublishedDate(post.publishedAt ?? post.syncedAt ?? post.updatedAt)}</span>
+          <span>{formatPublishedDate(post.publishedAt ?? post.syncedAt ?? post.updatedAt, locale)}</span>
         </div>
         <div className="published-note-stats">
-          <span title="Views">
+          <span title={t("published.stat.views")}>
             <Eye className="size-3.5" />
             {formatCompactNumber(post.stats.views)}
           </span>
-          <span title="Likes">
+          <span title={t("published.stat.likes")}>
             <Heart className="size-3.5" />
             {formatCompactNumber(post.stats.likes)}
           </span>
-          <span title="Collects">
+          <span title={t("published.stat.collects")}>
             <Bookmark className="size-3.5" />
             {formatCompactNumber(post.stats.collects)}
           </span>
-          <span title="Comments">
+          <span title={t("published.stat.comments")}>
             <MessageSquare className="size-3.5" />
             {formatCompactNumber(post.stats.comments)}
           </span>
-          <span title="Shares">
+          <span title={t("published.stat.shares")}>
             <Share2 className="size-3.5" />
             {formatCompactNumber(post.stats.shares)}
           </span>
         </div>
         <div className="published-note-controls">
           <Select onValueChange={(value) => onUpdate(post, { status: value as XhsPublishedPostStatus })} value={post.status}>
-            <SelectTrigger aria-label="Post status" className="published-note-status-select" size="sm">
+            <SelectTrigger aria-label={t("published.postStatus")} className="published-note-status-select" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2220,13 +3080,13 @@ function PublishedPostCard({
                 .filter((option): option is XhsPublishedPostStatus => option !== "all")
                 .map((option) => (
                   <SelectItem key={option} value={option}>
-                    {publishedPostStatusLabel[option]}
+                    {t(publishedPostStatusLabelKey[option])}
                   </SelectItem>
                 ))}
             </SelectContent>
           </Select>
           <Button
-            aria-label="Archive post"
+            aria-label={t("published.archivePost")}
             disabled={busy === `published-update-${post.id}` || post.status === "archived"}
             onClick={() => onUpdate(post, { status: "archived" })}
             size="icon-sm"
@@ -2245,7 +3105,7 @@ function PublishedPostCard({
               onUpdate(post, { statusNote: event.currentTarget.value });
             }
           }}
-          placeholder={engagement ? `互动 ${formatCompactNumber(engagement)}` : "复盘备注"}
+          placeholder={engagement ? t("published.engagementPrefix", { value: formatCompactNumber(engagement) }) : t("published.notePlaceholder")}
         />
       </div>
     </article>
@@ -2287,20 +3147,21 @@ function AutoRepliesView({
   selectedProfile: WorkspaceProfile | null;
   settings: XhsAutoReplySettings;
 }) {
+  const { t } = useI18n();
   const runnable = Boolean(selectedProfile && settings.stylePrompt.trim());
   const activeItems = items.filter((item) => item.status !== "already-replied" && item.status !== "skipped");
   return (
-    <section className="auto-reply-shell" aria-label="Xiaohongshu auto replies">
+    <section className="auto-reply-shell" aria-label={t("nav.replies")}>
       <div className="published-toolbar">
         <div className="published-toolbar-title">
-          <p>{selectedProfile ? `xiaohongshu/${selectedProfile.profile}` : "No XHS profile selected"}</p>
-          <h3>自动回复</h3>
+          <p>{selectedProfile ? `xiaohongshu/${selectedProfile.profile}` : t("published.noProfile")}</p>
+          <h3>{t("autoReply.title")}</h3>
         </div>
         <div className="published-toolbar-actions">
           <Select disabled={!agents.length} onValueChange={onSelectAgent} value={selectedAgentId}>
-            <SelectTrigger aria-label="Auto reply agent" className="auto-reply-agent-select" size="sm">
+            <SelectTrigger aria-label={t("common.agent")} className="auto-reply-agent-select" size="sm">
               <Bot className="size-3.5" />
-              <SelectValue placeholder="Agent" />
+              <SelectValue placeholder={t("common.agent")} />
             </SelectTrigger>
             <SelectContent>
               {agents.map((agent) => (
@@ -2319,11 +3180,11 @@ function AutoRepliesView({
           />
           <Button disabled={!selectedProfile || busy === "auto-reply-sync"} onClick={onSync} size="sm" type="button" variant="outline">
             {busy === "auto-reply-sync" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
-            同步评论
+            {t("autoReply.syncComments")}
           </Button>
           <Button disabled={!runnable || busy === "auto-reply-run"} onClick={onRun} size="sm" type="button">
             {busy === "auto-reply-run" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-            Start
+            {t("common.start")}
           </Button>
         </div>
       </div>
@@ -2333,56 +3194,76 @@ function AutoRepliesView({
       <div className="auto-reply-settings">
         <Card size="sm">
           <CardHeader>
-            <CardTitle>Reply Style Prompt</CardTitle>
-            <CardDescription>Agent 会按这个风格生成候选回复；server 负责去重、限速、写日志。</CardDescription>
+            <CardTitle>{t("autoReply.promptTitle")}</CardTitle>
+            <CardDescription>{t("autoReply.promptDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
               className="auto-reply-style-input"
               onChange={(event) => onSettingsChange({ ...settings, stylePrompt: event.target.value })}
-              placeholder="例如：语气真诚、短句、像真人运营者；不承诺结果，不引导私信，不留联系方式。"
+              placeholder={t("autoReply.promptPlaceholder")}
               value={settings.stylePrompt}
             />
+            <div className="auto-reply-style-presets" aria-label={t("autoReply.presetAria")}>
+              {autoReplyStylePresets.map((preset) => {
+                const active = settings.stylePrompt.trim() === preset.prompt;
+                return (
+                  <button
+                    className={cn("auto-reply-style-preset", active && "auto-reply-style-preset-active")}
+                    key={preset.id}
+                    onClick={() => onSettingsChange({ ...settings, stylePrompt: preset.prompt })}
+                    title={preset.prompt}
+                    type="button"
+                  >
+                    <span>
+                      <Zap className="size-3.5" />
+                      {t(preset.labelKey)}
+                    </span>
+                    <small>{t(preset.descriptionKey)}</small>
+                  </button>
+                );
+              })}
+            </div>
             <div className="auto-reply-controls">
               <label className="auto-reply-control-field">
-                <span className="auto-reply-control-label">语言风格</span>
+                <span className="auto-reply-control-label">{t("autoReply.locale")}</span>
                 <Select
                   onValueChange={(value) => onSettingsChange({ ...settings, locale: value as XhsAutoReplyLocale })}
                   value={settings.locale}
                 >
-                  <SelectTrigger aria-label="Region language style" size="sm">
+                  <SelectTrigger aria-label={t("autoReply.localeAria")} size="sm">
                     <SlidersHorizontal className="size-3.5" />
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {autoReplyLocaleOptions.map((locale) => (
                       <SelectItem key={locale} value={locale}>
-                        {autoReplyLocaleLabel[locale]}
+                        {t(autoReplyLocaleLabelKey[locale])}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </label>
               <label className="auto-reply-control-field">
-                <span className="auto-reply-control-label">执行模式</span>
+                <span className="auto-reply-control-label">{t("autoReply.dryRunMode")}</span>
                 <Select
                   onValueChange={(value) => onSettingsChange({ ...settings, dryRun: value === "true" })}
                   value={String(settings.dryRun)}
                 >
-                  <SelectTrigger aria-label="Dry run mode" size="sm">
+                  <SelectTrigger aria-label={t("autoReply.dryRunAria")} size="sm">
                     <ShieldCheck className="size-3.5" />
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="true">只生成草稿</SelectItem>
-                    <SelectItem value="false">发送回复</SelectItem>
+                    <SelectItem value="true">{t("autoReply.draftOnly")}</SelectItem>
+                    <SelectItem value="false">{t("autoReply.sendReply")}</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
               <label className="auto-reply-control-field">
-                <span className="auto-reply-control-label">每次最多回复</span>
+                <span className="auto-reply-control-label">{t("autoReply.maxReplies")}</span>
                 <Input
-                  aria-label="Max replies per run"
+                  aria-label={t("autoReply.maxRepliesAria")}
                   min={1}
                   max={50}
                   onChange={(event) =>
@@ -2393,9 +3274,9 @@ function AutoRepliesView({
                 />
               </label>
               <label className="auto-reply-control-field">
-                <span className="auto-reply-control-label">回复间隔（秒）</span>
+                <span className="auto-reply-control-label">{t("autoReply.delaySeconds")}</span>
                 <Input
-                  aria-label="Delay seconds"
+                  aria-label={t("autoReply.delaySecondsAria")}
                   min={0}
                   max={120}
                   onChange={(event) =>
@@ -2407,7 +3288,7 @@ function AutoRepliesView({
               </label>
               <Button disabled={!selectedProfile || busy === "auto-reply-settings"} onClick={onSaveSettings} size="sm" type="button" variant="outline">
                 {busy === "auto-reply-settings" ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                Save
+                {t("common.save")}
               </Button>
             </div>
           </CardContent>
@@ -2423,7 +3304,7 @@ function AutoRepliesView({
       ) : (
         <div className="published-empty">
           <Reply className="size-6" />
-          <span>还没有待回复评论。先同步评论，或确认已发布笔记里有可读取的评论。</span>
+          <span>{t("autoReply.noPending")}</span>
         </div>
       )}
     </section>
@@ -2439,12 +3320,13 @@ function AutoReplyItemCard({
   item: XhsAutoReplyItem;
   onUpdate: (item: XhsAutoReplyItem, patch: { status?: XhsAutoReplyItemStatus; replyContent?: string }) => void;
 }) {
+  const { t } = useI18n();
   return (
     <Card className="auto-reply-card" size="sm">
       <CardHeader>
         <CardTitle className="auto-reply-card-title">
-          <span>{item.commentAuthorName ?? "Unknown user"}</span>
-          <StatusBadge state={autoReplyStatusState(item.status)} label={autoReplyStatusLabel[item.status]} />
+          <span>{item.commentAuthorName ?? t("autoReply.unknownUser")}</span>
+          <StatusBadge state={autoReplyStatusState(item.status)} label={t(autoReplyStatusLabelKey[item.status])} />
         </CardTitle>
         <CardDescription>{item.noteTitle ?? item.noteId}</CardDescription>
       </CardHeader>
@@ -2473,7 +3355,7 @@ function AutoReplyItemCard({
             variant="outline"
           >
             <Archive className="size-3.5" />
-            Skip
+            {t("common.skip")}
           </Button>
           <Button
             disabled={busy === `auto-reply-item-${item.id}` || item.status === "pending"}
@@ -2483,7 +3365,7 @@ function AutoReplyItemCard({
             variant="outline"
           >
             <RefreshCcw className="size-3.5" />
-            Requeue
+            {t("common.requeue")}
           </Button>
         </div>
       </CardContent>
@@ -2497,25 +3379,34 @@ function CalendarScheduleView({
   jobs,
   onDelete,
   onRun,
-  onToggle
+  onNextWeek,
+  onPreviousWeek,
+  onThisWeek,
+  onToggle,
+  weekStart
 }: {
   busy: string | null;
   items: SocialTaskCalendarItem[];
   jobs: SocialCronJob[];
   onDelete: (job: SocialCronJob) => void;
   onRun: (job: SocialCronJob) => void;
+  onNextWeek: () => void;
+  onPreviousWeek: () => void;
+  onThisWeek: () => void;
   onToggle: (job: SocialCronJob) => void;
+  weekStart: Date;
 }) {
+  const { t } = useI18n();
   return (
     <div className="calendar-schedule-view">
-      <CalendarView items={items} />
-      <section className="calendar-cron-section" aria-label="Social cron jobs">
+      <CalendarView items={items} jobs={jobs} onNextWeek={onNextWeek} onPreviousWeek={onPreviousWeek} onThisWeek={onThisWeek} weekStart={weekStart} />
+      <section className="calendar-cron-section" aria-label={t("calendar.socialCron")}>
         <div className="calendar-cron-section-header">
           <div>
-            <h3>Social Cron</h3>
-            <p>{jobs.length ? `${jobs.length} schedules attached to this task calendar` : "No recurring schedules yet"}</p>
+            <h3>{t("calendar.socialCron")}</h3>
+            <p>{jobs.length ? t("calendar.schedulesAttached", { count: jobs.length }) : t("calendar.noRecurring")}</p>
           </div>
-          <Badge variant="outline">{jobs.filter((job) => job.enabled).length} enabled</Badge>
+          <Badge variant="outline">{t("calendar.enabledCount", { count: jobs.filter((job) => job.enabled).length })}</Badge>
         </div>
         <CronView busy={busy} jobs={jobs} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
       </section>
@@ -2523,22 +3414,53 @@ function CalendarScheduleView({
   );
 }
 
-function CalendarView({ items }: { items: SocialTaskCalendarItem[] }) {
-  const weekStart = calendarWeekStart(items);
+function CalendarView({
+  items,
+  jobs,
+  onNextWeek,
+  onPreviousWeek,
+  onThisWeek,
+  weekStart
+}: {
+  items: SocialTaskCalendarItem[];
+  jobs: SocialCronJob[];
+  onNextWeek: () => void;
+  onPreviousWeek: () => void;
+  onThisWeek: () => void;
+  weekStart: Date;
+}) {
+  const { locale, t } = useI18n();
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const weekItems = buildCalendarWeekItems(items, jobs, weekStart);
   const itemsByDay = days.map((day) =>
-    items
+    weekItems
       .filter((item) => sameLocalDate(new Date(item.startsAt), day))
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
   );
 
   return (
     <Card className="calendar-week-card">
-      <CardHeader className="border-b">
-        <CardTitle>Week of {formatCalendarDay(weekStart)}</CardTitle>
-        <CardDescription>
-          {formatCalendarDay(days[0])} - {formatCalendarDay(days[6])} / {items.length} tasks
-        </CardDescription>
+      <CardHeader className="calendar-week-header border-b">
+        <div className="calendar-week-title">
+          <CardTitle>{t("calendar.weekOf", { date: formatCalendarDay(weekStart, locale) })}</CardTitle>
+          <CardDescription>
+            {t("calendar.rangeTasks", { start: formatCalendarDay(days[0], locale), end: formatCalendarDay(days[6], locale), count: weekItems.length })}
+          </CardDescription>
+        </div>
+        <div className="calendar-week-actions">
+          <Button onClick={onPreviousWeek} size="sm" type="button" variant="outline">
+            <ChevronLeft className="size-3.5" />
+            {t("calendar.previousWeek")}
+          </Button>
+          <Button onClick={onThisWeek} size="sm" type="button" variant="outline">
+            <CalendarClock className="size-3.5" />
+            {t("calendar.thisWeek")}
+          </Button>
+          <Button onClick={onNextWeek} size="sm" type="button" variant="outline">
+            {t("calendar.nextWeek")}
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="calendar-week-wrapper">
@@ -2547,8 +3469,8 @@ function CalendarView({ items }: { items: SocialTaskCalendarItem[] }) {
               <tr>
                 {days.map((day) => (
                   <th key={day.toISOString()}>
-                    <span>{formatWeekday(day)}</span>
-                    <strong>{formatCalendarDay(day)}</strong>
+                    <span>{formatWeekday(day, locale)}</span>
+                    <strong>{formatCalendarDay(day, locale)}</strong>
                   </th>
                 ))}
               </tr>
@@ -2562,8 +3484,8 @@ function CalendarView({ items }: { items: SocialTaskCalendarItem[] }) {
                         itemsByDay[index].map((item) => (
                           <article className="calendar-task" key={`${item.source}/${item.id}`}>
                             <div className="calendar-task-head">
-                              <time>{formatTime(item.startsAt)}</time>
-                              <StatusBadge state={calendarState(item.status)} label={item.status} />
+                              <time>{formatTime(item.startsAt, locale)}</time>
+                              <StatusBadge state={calendarState(item.status)} label={calendarStatusLabel(item.status, t)} />
                             </div>
                             <strong>{item.title}</strong>
                             <small>
@@ -2572,7 +3494,7 @@ function CalendarView({ items }: { items: SocialTaskCalendarItem[] }) {
                           </article>
                         ))
                       ) : (
-                        <div className="calendar-empty-day">No tasks</div>
+                        <div className="calendar-empty-day">{t("calendar.noTasks")}</div>
                       )}
                     </div>
                   </td>
@@ -2587,6 +3509,7 @@ function CalendarView({ items }: { items: SocialTaskCalendarItem[] }) {
 }
 
 function BoardView({ busy, onRun, tasks }: { busy: string | null; onRun: (task: SocialBoardTask) => void; tasks: SocialBoardTask[] }) {
+  const { t } = useI18n();
   return (
     <div className="board-grid">
       {(["ready", "running", "done", "failed"] as const).map((status) => {
@@ -2594,7 +3517,7 @@ function BoardView({ busy, onRun, tasks }: { busy: string | null; onRun: (task: 
         return (
           <section className="board-lane" key={status}>
             <div className="board-lane-header">
-              <span>{status}</span>
+              <span>{t(boardStatusLabelKey[status])}</span>
               <Badge variant="outline">{laneTasks.length}</Badge>
             </div>
             <div className="space-y-2">
@@ -2618,14 +3541,14 @@ function BoardView({ busy, onRun, tasks }: { busy: string | null; onRun: (task: 
                           variant="outline"
                         >
                           {busy === `social-board-run-${task.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                          Run
+                          {t("common.run")}
                         </Button>
                       </CardContent>
                     ) : null}
                   </Card>
                 ))
               ) : (
-                <EmptyCompact label="Empty" />
+                <EmptyCompact label={t("empty.emptyLane")} />
               )}
             </div>
           </section>
@@ -2648,6 +3571,7 @@ function CronView({
   onRun: (job: SocialCronJob) => void;
   onToggle: (job: SocialCronJob) => void;
 }) {
+  const { locale, t } = useI18n();
   return (
     <div className="content-grid">
       {jobs.length ? (
@@ -2656,35 +3580,44 @@ function CronView({
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-3">
                 <span className="truncate">{job.name}</span>
-                <StatusBadge state={job.enabled ? "ok" : "warn"} label={job.enabled ? "enabled" : "paused"} />
+                <StatusBadge state={job.enabled ? "ok" : "warn"} label={job.enabled ? t("cron.status.enabled") : t("cron.status.paused")} />
               </CardTitle>
               <CardDescription>{job.schedule.display}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
-                <MetricRow label="Agent" value={job.agentId} />
+                <MetricRow label={t("common.agent")} value={job.agentId} />
                 {job.llm ? <MetricRow label="LLM" value={`${job.llm.provider}/${job.llm.model}`} /> : null}
-                <MetricRow label="Profile" value={job.profile} />
-                <MetricRow label="Next" value={formatDateTime(job.nextRunAt)} />
-                <MetricRow label="Last" value={job.lastStatus ?? job.state} />
+                <MetricRow label={t("common.profile")} value={job.profile} />
+                <MetricRow label={t("common.type")} value={t(socialCronTaskLabelKey[job.taskType])} />
+                <MetricRow label={t("common.source")} value={job.source === "hermes" ? "Hermes cron" : "Growth Hacker"} />
+                <MetricRow label={t("common.next")} value={formatDateTime(job.nextRunAt, locale)} />
+                <MetricRow label={t("common.last")} value={job.lastStatus ?? job.state} />
               </div>
-              <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                <Button disabled={busy === `social-cron-run-${job.id}`} onClick={() => onRun(job)} size="sm" type="button" variant="outline">
-                  {busy === `social-cron-run-${job.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                  Run
+              {job.readOnly ? (
+                <Button className="w-full" disabled size="sm" type="button" variant="outline">
+                  <ShieldCheck className="size-3.5" />
+                  {t("cron.managedByHermes")}
                 </Button>
-                <Button onClick={() => onToggle(job)} size="sm" type="button" variant="outline">
-                  {job.enabled ? "Pause" : "Resume"}
-                </Button>
-                <Button aria-label="Delete cron job" onClick={() => onDelete(job)} size="icon-sm" type="button" variant="destructive">
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
+              ) : (
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <Button disabled={busy === `social-cron-run-${job.id}`} onClick={() => onRun(job)} size="sm" type="button" variant="outline">
+                    {busy === `social-cron-run-${job.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                    {t("common.run")}
+                  </Button>
+                  <Button onClick={() => onToggle(job)} size="sm" type="button" variant="outline">
+                    {job.enabled ? t("common.pause") : t("common.resume")}
+                  </Button>
+                  <Button aria-label={t("cron.deleteJob")} onClick={() => onDelete(job)} size="icon-sm" type="button" variant="destructive">
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         ))
       ) : (
-        <EmptyWide label="No social cron jobs." />
+        <EmptyWide label={t("cron.noJobs")} />
       )}
     </div>
   );
@@ -2737,21 +3670,29 @@ function ChatView({
   skills: HermesSkillInfo[];
   status: HermesChatStatus | null;
 }) {
-  const transcript = buildChatTranscript(events);
+  const { locale, t } = useI18n();
+  const transcript = buildChatTranscript(events, t);
+  const contextBalance = getChatContextBalance(model, events, t);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const [listening, setListening] = useState(false);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const speechAvailable = Boolean(getSpeechRecognitionConstructor());
   const mentionQuery = activeRunId ? null : activeSkillMentionQuery(draft);
+  const enabledSkills = useMemo(
+    () => uniqueHermesSkillsByName(skills).filter((skill) => skill.enabled).sort(sortHermesSkills),
+    [skills]
+  );
   const mentionMatches =
     mentionQuery === null
       ? []
-      : uniqueHermesSkillsByName(skills)
-          .filter((skill) => skill.enabled && skill.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      : enabledSkills
+          .filter((skill) => skill.name.toLowerCase().includes(mentionQuery.toLowerCase()))
           .sort(sortHermesSkills)
           .slice(0, 8);
   const mentionedSkills = resolveSkillMentions(draft, skills).skills;
+  const mentionedSkillNames = new Set(mentionedSkills.map((skill) => skill.name.toLowerCase()));
+  const visibleDraft = removeSelectedSkillMentions(draft, mentionedSkills);
   useEffect(() => {
     if (!actionMenuOpen) return;
     const closeOnOutsidePointer = (event: MouseEvent) => {
@@ -2779,19 +3720,14 @@ function ChatView({
         ) : (
           <div className="chat-empty">
             <MessageSquare className="size-5" />
-            <span>{selectedAgent ? `${selectedAgent.id} / Hermes API` : "No agent selected"}</span>
+            <span>{selectedAgent ? `${selectedAgent.id} / Hermes API` : t("chat.noAgentSelected")}</span>
           </div>
         )}
       </div>
       <div className="chat-dock">
-        {mentionedSkills.length || activeRunId ? (
+        {activeRunId ? (
           <div className="chat-runtime-bar">
-            {mentionedSkills.map((skill) => (
-              <Badge key={skill.name} variant="outline">
-                ${skill.name}
-              </Badge>
-            ))}
-            {activeRunId ? <Badge variant="outline">{activeRunId}</Badge> : null}
+            <Badge variant="outline">{activeRunId}</Badge>
           </div>
         ) : null}
         <div className="chat-composer">
@@ -2802,25 +3738,42 @@ function ChatView({
                   mentionMatches.map((skill) => (
                     <button key={skill.path} onClick={() => onDraftChange(insertSkillMention(draft, skill.name))} type="button">
                       <span>${skill.name}</span>
-                      <small>{skill.category || "uncategorized"}</small>
+                      <small>{skill.category || t("chat.uncategorized")}</small>
                     </button>
                   ))
                 ) : (
-                  <div className="skill-mention-empty">No matching enabled skills</div>
+                  <div className="skill-mention-empty">{t("chat.noMatchingSkills")}</div>
                 )}
+              </div>
+            ) : null}
+            {mentionedSkills.length ? (
+              <div className="chat-selected-skills">
+                {mentionedSkills.map((skill) => (
+                  <button
+                    aria-label={t("chat.removeSkill", { name: skill.name })}
+                    className="chat-selected-skill"
+                    key={skill.name}
+                    onClick={() => onDraftChange(setSkillMention(draft, skill.name, false))}
+                    type="button"
+                  >
+                    <Gauge className="size-3.5" />
+                    <span>${skill.name}</span>
+                    <X className="size-3" />
+                  </button>
+                ))}
               </div>
             ) : null}
             <Textarea
               disabled={Boolean(activeRunId)}
-              onChange={(event) => onDraftChange(event.target.value)}
+              onChange={(event) => onDraftChange(mergeSelectedSkillMentions(event.target.value, mentionedSkills))}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.nativeEvent.isComposing && (event.shiftKey || event.metaKey || event.ctrlKey)) {
                   event.preventDefault();
                   onSend();
                 }
               }}
-              placeholder={composerMode === "image" ? "Describe the image to create..." : "Message the agent... use $skill"}
-              value={draft}
+              placeholder={composerMode === "image" ? t("chat.placeholderImage") : t("chat.placeholderMessage")}
+              value={visibleDraft}
             />
             {attachments.length ? (
               <div className="chat-attachments">
@@ -2828,7 +3781,7 @@ function ChatView({
                   <span className="chat-attachment-pill" key={attachment.id}>
                     <FileText className="size-3.5" />
                     <span>{attachment.name}</span>
-                    <button aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(attachment.id)} type="button">
+                    <button aria-label={t("chat.removeAttachment", { name: attachment.name })} onClick={() => onRemoveAttachment(attachment.id)} type="button">
                       <Trash2 className="size-3" />
                     </button>
                   </span>
@@ -2853,7 +3806,7 @@ function ChatView({
               <Button
                 aria-expanded={actionMenuOpen}
                 aria-haspopup="menu"
-                aria-label="Open composer actions"
+                aria-label={t("chat.openComposerActions")}
                 disabled={Boolean(activeRunId)}
                 onClick={() => setActionMenuOpen((current) => !current)}
                 size="icon-sm"
@@ -2877,8 +3830,8 @@ function ChatView({
                       <FileText className="size-4" />
                     </span>
                     <span>
-                      <strong>Add photos & files</strong>
-                      <small>Attach local text context</small>
+                      <strong>{t("chat.addFiles")}</strong>
+                      <small>{t("chat.attachContext")}</small>
                     </span>
                   </button>
                   <button
@@ -2894,8 +3847,8 @@ function ChatView({
                       <ImageIcon className="size-4" />
                     </span>
                     <span>
-                      <strong>Create image</strong>
-                      <small>Use Hermes image_generate</small>
+                      <strong>{t("chat.createImage")}</strong>
+                      <small>{t("chat.useImageGenerate")}</small>
                     </span>
                   </button>
                 </div>
@@ -2904,29 +3857,29 @@ function ChatView({
             {composerMode === "image" ? (
               <button className="chat-composer-mode-chip" onClick={() => onComposerModeChange(null)} type="button">
                 <ImageIcon className="size-3.5" />
-                <span>Create image</span>
+                <span>{t("chat.createImage")}</span>
                 <X className="size-3" />
               </button>
             ) : null}
             <Select onValueChange={(value) => onPermissionModeChange(value as ChatPermissionMode)} value={permissionMode}>
-              <SelectTrigger aria-label="Permission mode" className="chat-control-select" size="sm">
+              <SelectTrigger aria-label={t("chat.permissionMode")} className="chat-control-select" size="sm">
                 <ShieldCheck className="size-3.5 text-orange-600" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="start" className="chat-select-content chat-permission-menu" position="popper" sideOffset={8}>
                 <SelectItem className="chat-select-item" value="full_access">
-                  {chatPermissionLabels.full_access}
+                  {t(chatPermissionLabelKey.full_access)}
                 </SelectItem>
                 <SelectItem className="chat-select-item" value="ask">
-                  {chatPermissionLabels.ask}
+                  {t(chatPermissionLabelKey.ask)}
                 </SelectItem>
                 <SelectItem className="chat-select-item" value="read_only">
-                  {chatPermissionLabels.read_only}
+                  {t(chatPermissionLabelKey.read_only)}
                 </SelectItem>
               </SelectContent>
             </Select>
             <Select onValueChange={onModelChange} value={model}>
-              <SelectTrigger aria-label="Model" className="chat-model-select" size="sm">
+              <SelectTrigger aria-label={t("chat.model")} className="chat-model-select" size="sm">
                 <Zap className="size-3.5" />
                 <SelectValue />
               </SelectTrigger>
@@ -2938,33 +3891,92 @@ function ChatView({
                 ))}
               </SelectContent>
             </Select>
+            <ChatContextBalanceHint balance={contextBalance} />
+            <DropdownMenuPrimitive.Root>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuPrimitive.Trigger asChild>
+                    <Button
+                      aria-label={t("chat.selectSkills")}
+                      className={cn("chat-skill-select", mentionedSkills.length && "chat-skill-select-active")}
+                      disabled={Boolean(activeRunId) || !enabledSkills.length}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Gauge className="size-3.5" />
+                      <span>{skillPickerLabel(mentionedSkills, t)}</span>
+                      <ChevronDown className="size-3" />
+                    </Button>
+                  </DropdownMenuPrimitive.Trigger>
+                </TooltipTrigger>
+                <TooltipContent>{t("chat.selectSkills")}</TooltipContent>
+              </Tooltip>
+              <DropdownMenuPrimitive.Portal>
+                <DropdownMenuPrimitive.Content
+                  align="center"
+                  avoidCollisions
+                  className="chat-select-content chat-skill-menu"
+                  collisionPadding={18}
+                  side="top"
+                  sideOffset={104}
+                >
+                  {enabledSkills.length ? (
+                    enabledSkills.map((skill) => {
+                      const checked = mentionedSkillNames.has(skill.name.toLowerCase());
+                      return (
+                        <DropdownMenuPrimitive.CheckboxItem
+                          checked={checked}
+                          className="chat-skill-menu-item"
+                          key={skill.path}
+                          onCheckedChange={(nextChecked) => onDraftChange(setSkillMention(draft, skill.name, nextChecked === true))}
+                          onSelect={(event) => event.preventDefault()}
+                          textValue={skill.name}
+                        >
+                          <span className="chat-skill-menu-check">{checked ? <CheckCircle2 className="size-3.5" /> : null}</span>
+                          <span className="chat-skill-menu-copy">
+                            <strong>${skill.name}</strong>
+                            <small>{skill.description || skill.category || t("skills.noDescription")}</small>
+                          </span>
+                        </DropdownMenuPrimitive.CheckboxItem>
+                      );
+                    })
+                  ) : (
+                    <DropdownMenuPrimitive.Item className="chat-skill-menu-empty" disabled>
+                      {t("chat.skillMenuEmpty")}
+                    </DropdownMenuPrimitive.Item>
+                  )}
+                </DropdownMenuPrimitive.Content>
+              </DropdownMenuPrimitive.Portal>
+            </DropdownMenuPrimitive.Root>
             <Select onValueChange={(value) => onReasoningEffortChange(value as ChatReasoningEffort)} value={reasoningEffort}>
-              <SelectTrigger aria-label="Reasoning effort" className="chat-effort-select" size="sm">
+              <SelectTrigger aria-label={t("chat.reasoningEffort")} className="chat-effort-select" size="sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="start" className="chat-select-content chat-effort-menu" position="popper" sideOffset={8}>
                 <SelectItem className="chat-select-item" value="low">
-                  {chatReasoningLabels.low}
+                  {t(chatReasoningLabelKey.low)}
                 </SelectItem>
                 <SelectItem className="chat-select-item" value="medium">
-                  {chatReasoningLabels.medium}
+                  {t(chatReasoningLabelKey.medium)}
                 </SelectItem>
                 <SelectItem className="chat-select-item" value="high">
-                  {chatReasoningLabels.high}
+                  {t(chatReasoningLabelKey.high)}
                 </SelectItem>
                 <SelectItem className="chat-select-item" value="xhigh">
-                  {chatReasoningLabels.xhigh}
+                  {t(chatReasoningLabelKey.xhigh)}
                 </SelectItem>
               </SelectContent>
             </Select>
             <Button
-              aria-label="Voice input"
+              aria-label={t("chat.voiceInput")}
               className={cn(listening && "chat-control-active")}
               disabled={Boolean(activeRunId) || !speechAvailable}
               onClick={() => {
                 const recognition = createSpeechRecognition({
                   onEnd: () => setListening(false),
-                  onResult: (text) => onDraftChange([draft, text].filter(Boolean).join(draft ? "\n" : ""))
+                  onResult: (text) => onDraftChange([draft, text].filter(Boolean).join(draft ? "\n" : "")),
+                  locale
                 });
                 if (!recognition) return;
                 setListening(true);
@@ -2976,9 +3988,8 @@ function ChatView({
             >
               <Mic className="size-4" />
             </Button>
-            <ChatConnectionStatus status={status} />
             {activeRunId ? (
-              <Button aria-label="Stop run" onClick={onStop} size="icon" type="button" variant="destructive">
+              <Button aria-label={t("chat.stopRun")} onClick={onStop} size="icon" type="button" variant="destructive">
                 <Square className="size-4" />
               </Button>
             ) : (
@@ -2993,12 +4004,42 @@ function ChatView({
   );
 }
 
-function ChatConnectionStatus({ status }: { status: HermesChatStatus | null }) {
+interface ChatContextBalance {
+  detail: string;
+  remainingRatio: number;
+  usedRatio: number;
+  tone: "ok" | "warn" | "bad" | "unknown";
+}
+
+function ChatContextBalanceHint({ balance }: { balance: ChatContextBalance }) {
+  const style = {
+    "--chat-context-used": `${Math.round(balance.usedRatio * 100)}%`
+  } as CSSProperties;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          aria-label={balance.detail}
+          className={cn("chat-context-balance", `chat-context-balance-${balance.tone}`)}
+          role="status"
+          style={style}
+          tabIndex={0}
+        >
+          <span className="chat-context-balance-ring" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{balance.detail}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ChatConnectionStatus({ className, status }: { className?: string; status: HermesChatStatus | null }) {
+  const { t } = useI18n();
   const available = Boolean(status?.available);
-  const label = available ? "Hermes API online" : "Hermes API offline";
+  const label = available ? t("chat.hermesOnline") : t("chat.hermesOffline");
   const detail = available ? status?.baseUrl : status?.error ?? "api_server unavailable";
   return (
-    <span className={cn("chat-connection-status", available ? "chat-connection-status-ok" : "chat-connection-status-bad")} title={detail}>
+    <span className={cn("chat-connection-status", className, available ? "chat-connection-status-ok" : "chat-connection-status-bad")} title={detail}>
       <span className="chat-connection-dot" />
       <span className="chat-connection-label">{label}</span>
       <span className="chat-connection-detail">{detail}</span>
@@ -3008,7 +4049,7 @@ function ChatConnectionStatus({ status }: { status: HermesChatStatus | null }) {
 
 interface ChatTranscriptItemModel {
   id: string;
-  kind: "user" | "assistant" | "tool" | "system" | "approval" | "runtime";
+  kind: "user" | "assistant" | "tool" | "system" | "approval";
   text: string;
   runId?: string;
   tool?: string;
@@ -3016,6 +4057,16 @@ interface ChatTranscriptItemModel {
   toolCallId?: string;
   state?: "running" | "done" | "failed";
   choices?: string[];
+  tools?: ChatTranscriptToolModel[];
+}
+
+interface ChatTranscriptToolModel {
+  id: string;
+  text: string;
+  tool?: string;
+  label?: string;
+  toolCallId?: string;
+  state?: "running" | "done" | "failed";
 }
 
 const chatMarkdownComponents: Components = {
@@ -3031,6 +4082,13 @@ function ChatTranscriptItem({
   item: ChatTranscriptItemModel;
   onApprove: (runId: string, choice: string) => void;
 }) {
+  const { t } = useI18n();
+  const [toolDetailsExpanded, setToolDetailsExpanded] = useState(item.kind === "tool" && item.state !== "done");
+
+  useEffect(() => {
+    if (item.kind === "tool") setToolDetailsExpanded(item.state !== "done");
+  }, [item.id, item.kind, item.state]);
+
   if (item.kind === "approval" && item.runId) {
     return (
       <div className="chat-line chat-line-system">
@@ -3050,6 +4108,18 @@ function ChatTranscriptItem({
   }
 
   if (item.kind === "tool") {
+    const tools = item.tools?.length
+      ? item.tools
+      : [
+          {
+            id: item.id,
+            label: item.label,
+            state: item.state,
+            text: item.text,
+            tool: item.tool,
+            toolCallId: item.toolCallId
+          }
+        ];
     return (
       <div className={cn("chat-line chat-line-tool", item.state === "failed" && "chat-line-tool-failed")}>
         {item.state === "running" ? (
@@ -3059,22 +4129,23 @@ function ChatTranscriptItem({
         ) : (
           <CheckCircle2 className="size-4" />
         )}
-        <div className="chat-line-body">
-          <strong>{item.label ?? item.tool}</strong>
-          <span>{item.text}</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (item.kind === "runtime") {
-    return (
-      <div className="chat-line chat-line-runtime">
-        <Gauge className="size-4" />
-        <div className="chat-line-body">
-          <strong>{item.label ?? "agent-runtime"}</strong>
-          <span>{item.text}</span>
-        </div>
+        <details
+          className="chat-line-body chat-tool-details"
+          onToggle={(event) => setToolDetailsExpanded(event.currentTarget.open)}
+          open={toolDetailsExpanded}
+        >
+          <summary className="chat-tool-summary">
+            <strong>{toolTranscriptSummary(item, tools, t)}</strong>
+          </summary>
+          <div className="chat-tool-list">
+            {tools.map((tool) => (
+              <div className="chat-tool-row" key={tool.id}>
+                <strong>{tool.label ?? tool.tool}</strong>
+                <span>{tool.text}</span>
+              </div>
+            ))}
+          </div>
+        </details>
       </div>
     );
   }
@@ -3095,7 +4166,14 @@ function ChatTranscriptItem({
   );
 }
 
-function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel[] {
+function toolTranscriptSummary(item: ChatTranscriptItemModel, tools: ChatTranscriptToolModel[], t: TFunction): string {
+  if (tools.length === 1) return tools[0].label ?? tools[0].tool ?? t("chat.toolFallback");
+  const state =
+    item.state === "running" ? t("chat.toolState.running") : item.state === "failed" ? t("chat.toolState.failed") : t("chat.toolState.completed");
+  return t("chat.toolCallsState", { count: tools.length, state });
+}
+
+function buildChatTranscript(events: HermesChatEvent[], t?: TFunction): ChatTranscriptItemModel[] {
   const items: ChatTranscriptItemModel[] = [];
   let assistant: ChatTranscriptItemModel | undefined;
 
@@ -3122,27 +4200,12 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
     }
 
     if (isRuntimeEvent(event)) {
-      closeAssistant();
-      items.push({
-        id: `runtime-${index}`,
-        kind: "runtime",
-        label: runtimeEventLabel(event),
-        text: runtimeEventText(event)
-      });
       continue;
     }
 
     if (isToolStartedEvent(event)) {
       closeAssistant();
-      items.push({
-        id: `tool-${index}`,
-        kind: "tool",
-        state: "running",
-        label: toolEventLabel(event, "running"),
-        text: toolEventText(event, "running"),
-        tool: toolEventName(event),
-        toolCallId: toolEventCallId(event)
-      });
+      appendToolTranscriptItem(items, createToolTranscriptItem(event, index, "running", t));
       continue;
     }
 
@@ -3150,30 +4213,16 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
       closeAssistant();
       const callId = toolEventCallId(event);
       const toolName = toolEventName(event);
-      const tool = [...items]
-        .reverse()
-        .find(
-          (item) =>
-            item.kind === "tool" &&
-            item.state === "running" &&
-            ((callId && item.toolCallId === callId) || (!callId && item.tool === toolName))
-        );
+      const tool = findRunningToolTranscriptItem(items, callId, toolName);
       const state = toolEventFailed(event) ? "failed" : "done";
       if (tool) {
         tool.state = state;
-        tool.label = toolEventLabel(event, state);
+        tool.label = toolEventLabel(event, state, t);
         tool.text = toolEventText(event, state);
       } else {
-        items.push({
-          id: `tool-${index}`,
-          kind: "tool",
-          state,
-          label: toolEventLabel(event, state),
-          text: toolEventText(event, state),
-          tool: toolName,
-          toolCallId: callId
-        });
+        appendToolTranscriptItem(items, createToolTranscriptItem(event, index, state, t));
       }
+      refreshToolTranscriptGroups(items);
       continue;
     }
 
@@ -3183,7 +4232,7 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
         id: `approval-${index}`,
         kind: "approval",
         runId: event.run_id,
-        text: String(event.preview ?? event.command ?? "Approval required"),
+        text: String(event.preview ?? event.command ?? t?.("chat.approvalRequired") ?? "Approval required"),
         choices: event.choices
       });
       continue;
@@ -3191,7 +4240,11 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
 
     if (name === "approval.responded") {
       closeAssistant();
-      items.push({ id: `approval-response-${index}`, kind: "system", text: `approval: ${event.choice ?? "sent"}` });
+      items.push({
+        id: `approval-response-${index}`,
+        kind: "system",
+        text: t?.("chat.approvalSent", { choice: String(event.choice ?? "sent") }) ?? `approval: ${event.choice ?? "sent"}`
+      });
       continue;
     }
 
@@ -3214,25 +4267,133 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
     }
   }
 
-  return items.filter((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval" || item.kind === "runtime");
+  return items.filter((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval");
 }
 
-function buildAgentRuntimeEvent(
-  run: HermesChatRunResponse,
-  options: Pick<HermesChatRunOptions, "agentId" | "model" | "permissionMode" | "reasoningEffort">
-): HermesChatEvent {
+function getChatContextBalance(model: string, events: HermesChatEvent[], t: TFunction): ChatContextBalance {
+  const contextWindow = chatContextWindowTokens(model);
+  if (!contextWindow) {
+    return {
+      detail: t("chat.contextUnconfigured", { model }),
+      remainingRatio: 1,
+      usedRatio: 0,
+      tone: "unknown"
+    };
+  }
+  const usedTokens = latestChatUsageTokens(events);
+  const remainingTokens = Math.max(contextWindow - (usedTokens ?? 0), 0);
+  const remainingRatio = remainingTokens / contextWindow;
+  const usedRatio = Math.min(Math.max((usedTokens ?? 0) / contextWindow, 0), 1);
+  const tone = remainingRatio < 0.1 ? "bad" : remainingRatio < 0.25 ? "warn" : "ok";
   return {
-    event: "agent-runtime",
-    run_id: run.runId,
-    timestamp: Date.now() / 1000,
-    agentId: options.agentId,
-    model: options.model,
-    permissionMode: options.permissionMode,
-    reasoningEffort: options.reasoningEffort,
-    sessionId: run.sessionId,
-    hermesSessionId: run.hermesSessionId,
-    status: run.status
+    detail:
+      usedTokens === undefined
+        ? t("chat.contextFull", { remaining: formatTokenBudget(contextWindow), total: formatTokenBudget(contextWindow) })
+        : t("chat.contextRemaining", {
+            remaining: formatTokenBudget(remainingTokens),
+            total: formatTokenBudget(contextWindow),
+            used: formatTokenBudget(usedTokens)
+          }),
+    remainingRatio,
+    usedRatio,
+    tone
   };
+}
+
+function chatContextWindowTokens(model: string): number | undefined {
+  const normalized = model.replace(/^openai\//, "");
+  return chatModelContextWindows[normalized] ?? chatModelContextWindows[model];
+}
+
+function latestChatUsageTokens(events: HermesChatEvent[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const usage = events[index].usage;
+    const total = usageNumber(usage?.total_tokens);
+    if (total !== undefined) return total;
+    const input = usageNumber(usage?.input_tokens) ?? usageNumber(usage?.prompt_tokens);
+    const output = usageNumber(usage?.output_tokens) ?? usageNumber(usage?.completion_tokens);
+    if (input !== undefined || output !== undefined) return (input ?? 0) + (output ?? 0);
+  }
+  return undefined;
+}
+
+function usageNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function createToolTranscriptItem(
+  event: HermesChatEvent,
+  index: number,
+  state: ChatTranscriptToolModel["state"],
+  t?: TFunction
+): ChatTranscriptToolModel {
+  return {
+    id: `tool-${index}`,
+    state,
+    label: toolEventLabel(event, state, t),
+    text: toolEventText(event, state),
+    tool: toolEventName(event),
+    toolCallId: toolEventCallId(event)
+  };
+}
+
+function appendToolTranscriptItem(items: ChatTranscriptItemModel[], tool: ChatTranscriptToolModel): void {
+  const group = latestToolTranscriptGroup(items);
+  if (group?.tools) {
+    group.tools.push(tool);
+  } else {
+    items.push({
+      id: `tool-group-${tool.id}`,
+      kind: "tool",
+      text: "",
+      tools: [tool]
+    });
+  }
+  refreshToolTranscriptGroups(items);
+}
+
+function latestToolTranscriptGroup(items: ChatTranscriptItemModel[]): ChatTranscriptItemModel | undefined {
+  const item = items.at(-1);
+  return item?.kind === "tool" ? item : undefined;
+}
+
+function findRunningToolTranscriptItem(
+  items: ChatTranscriptItemModel[],
+  callId: string | undefined,
+  toolName: string
+): ChatTranscriptToolModel | undefined {
+  for (const item of [...items].reverse()) {
+    if (item.kind !== "tool") continue;
+    const tools = item.tools ?? [];
+    const tool = [...tools]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.state === "running" &&
+          ((callId && candidate.toolCallId === callId) || (!callId && candidate.tool === toolName))
+      );
+    if (tool) return tool;
+  }
+  return undefined;
+}
+
+function refreshToolTranscriptGroups(items: ChatTranscriptItemModel[]): void {
+  for (const group of items) {
+    refreshToolTranscriptGroup(group);
+  }
+}
+
+function refreshToolTranscriptGroup(group: ChatTranscriptItemModel): void {
+  if (!group?.tools?.length) return;
+  group.text = group.tools.map((tool) => [tool.label ?? tool.tool, tool.text].filter(Boolean).join(" ")).join("\n");
+  group.state = group.tools.some((tool) => tool.state === "failed")
+    ? "failed"
+    : group.tools.some((tool) => tool.state === "running")
+      ? "running"
+      : "done";
+  group.label = group.tools.length === 1 ? group.tools[0].label : "tool calls";
+  group.tool = group.tools.length === 1 ? group.tools[0].tool : undefined;
+  group.toolCallId = group.tools.length === 1 ? group.tools[0].toolCallId : undefined;
 }
 
 function assistantOutputAlreadyRendered(items: ChatTranscriptItemModel[], output: string): boolean {
@@ -3253,21 +4414,22 @@ function isRuntimeEvent(event: HermesChatEvent): boolean {
   return name === "agent-runtime" || name === "agent.runtime" || name === "runtime.resolved" || name === "run.started";
 }
 
-function runtimeEventLabel(event: HermesChatEvent): string {
-  const agent = event.agentId ?? readableRecordValue(event, "agent_id") ?? readableRecordValue(event, "profile");
-  return agent ? `agent-runtime: ${agent}` : "agent-runtime";
-}
-
-function runtimeEventText(event: HermesChatEvent): string {
-  const parts = [
-    event.model ? `model=${event.model}` : undefined,
-    event.permissionMode ? `permission=${event.permissionMode}` : undefined,
-    event.reasoningEffort ? `reasoning=${event.reasoningEffort}` : undefined,
-    event.status ? `status=${event.status}` : undefined,
-    event.run_id ? `run=${event.run_id}` : undefined,
-    event.hermesSessionId ? `session=${event.hermesSessionId}` : event.sessionId ? `session=${event.sessionId}` : undefined
-  ].filter((part): part is string => Boolean(part));
-  return parts.join(" / ") || event.preview || event.message || "runtime attached";
+function buildAgentRuntimeEvent(
+  run: HermesChatRunResponse,
+  options: Pick<HermesChatRunOptions, "agentId" | "model" | "permissionMode" | "reasoningEffort">
+): HermesChatEvent {
+  return {
+    event: "agent-runtime",
+    run_id: run.runId,
+    timestamp: Date.now() / 1000,
+    agentId: options.agentId,
+    model: options.model,
+    permissionMode: options.permissionMode,
+    reasoningEffort: options.reasoningEffort,
+    sessionId: run.sessionId,
+    hermesSessionId: run.hermesSessionId,
+    status: run.status
+  };
 }
 
 function isToolStartedEvent(event: HermesChatEvent): boolean {
@@ -3299,8 +4461,9 @@ function toolEventFailed(event: HermesChatEvent): boolean {
   return Boolean(event.error) || event.status === "failed" || event.status === "error" || event.item?.status === "failed";
 }
 
-function toolEventLabel(event: HermesChatEvent, state: ChatTranscriptItemModel["state"]): string {
-  const prefix = state === "running" ? "tool use" : state === "failed" ? "tool failed" : "tool completed";
+function toolEventLabel(event: HermesChatEvent, state: ChatTranscriptItemModel["state"], t?: TFunction): string {
+  const prefix =
+    state === "running" ? (t?.("chat.toolUse") ?? "tool use") : state === "failed" ? (t?.("chat.toolFailed") ?? "tool failed") : (t?.("chat.toolCompleted") ?? "tool completed");
   return `${prefix}: ${toolEventName(event)}`;
 }
 
@@ -3332,12 +4495,6 @@ function compactJson(value: unknown): string {
   }
 }
 
-function readableRecordValue(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) return undefined;
-  const recordValue = value[key];
-  return typeof recordValue === "string" && recordValue.trim() ? recordValue : undefined;
-}
-
 function SkillsView({
   agent,
   busy,
@@ -3355,6 +4512,7 @@ function SkillsView({
   search: string;
   skills: HermesSkillInfo[];
 }) {
+  const { t } = useI18n();
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = skills.filter((skill) => {
     if (!normalizedSearch) return true;
@@ -3365,14 +4523,14 @@ function SkillsView({
     <div className="skills-shell">
       <div className="skills-toolbar">
         <div>
-          <p>{agent ? `${agent.id} / ${agent.runner}` : "No agent selected"}</p>
-          <h3>{enabled} enabled skills</h3>
+          <p>{agent ? `${agent.id} / ${agent.runner}` : t("chat.noAgentSelected")}</p>
+          <h3>{t("skills.enabledSkills", { count: enabled })}</h3>
         </div>
         <div className="skills-toolbar-actions">
-          <Input onChange={(event) => onSearchChange(event.target.value)} placeholder="Search skills" value={search} />
+          <Input onChange={(event) => onSearchChange(event.target.value)} placeholder={t("skills.search")} value={search} />
           <Button onClick={onRefresh} size="sm" type="button" variant="outline">
             <RefreshCcw className="size-3.5" />
-            Refresh
+            {t("common.refresh")}
           </Button>
         </div>
       </div>
@@ -3385,8 +4543,8 @@ function SkillsView({
                 <h4>${skill.name}</h4>
                 <Badge variant={skill.enabled ? "secondary" : "outline"}>{skill.status}</Badge>
               </div>
-              <p>{skill.description || "No description"}</p>
-              <span>{skill.category || "uncategorized"}</span>
+              <p>{skill.description || t("skills.noDescription")}</p>
+              <span>{skill.category || t("chat.uncategorized")}</span>
             </div>
             <Button
               disabled={busy === `skill-${skill.name}`}
@@ -3396,28 +4554,175 @@ function SkillsView({
               variant={skill.enabled ? "outline" : "secondary"}
             >
               {busy === `skill-${skill.name}` ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              {skill.enabled ? "Disable" : "Enable"}
+              {skill.enabled ? t("skills.disable") : t("skills.enable")}
             </Button>
           </article>
         ))}
-        {!filtered.length ? <EmptyWide label="No matching skills." /> : null}
+        {!filtered.length ? <EmptyWide label={t("skills.noMatching")} /> : null}
       </div>
     </div>
   );
 }
 
+function HermesContextView({
+  context,
+  onRefresh,
+  onReference,
+  onSelectSession
+}: {
+  context: HermesContextSnapshot | null;
+  onRefresh: () => void;
+  onReference: () => void;
+  onSelectSession: (sessionId: string) => void;
+}) {
+  const { locale, t } = useI18n();
+  const selectedSession = context?.sessions.find((session) => session.id === context.selectedSessionId) ?? context?.sessions[0];
+  return (
+    <div className="hermes-context-shell">
+      <div className="skills-toolbar">
+        <div>
+          <p>{context?.sourcePaths.stateDb ?? "~/.hermes/state.db"}</p>
+          <h3>{t("hermes.contextTitle")}</h3>
+        </div>
+        <div className="skills-toolbar-actions">
+          <Button disabled={!context} onClick={onReference} size="sm" type="button" variant="outline">
+            <FileText className="size-3.5" />
+            {t("hermes.referenceContext")}
+          </Button>
+          <Button onClick={onRefresh} size="sm" type="button" variant="outline">
+            <RefreshCcw className="size-3.5" />
+            {t("common.refresh")}
+          </Button>
+        </div>
+      </div>
+
+      {context ? (
+        <>
+          <div className="content-grid hermes-context-metrics">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>{t("hermes.selectedSession")}</CardTitle>
+                <CardDescription>{selectedSession?.id ?? t("common.unknown")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <MetricRow label={t("common.source")} value={selectedSession?.source ?? t("common.unknown")} />
+                <MetricRow label={t("chat.model")} value={selectedSession?.model ?? t("common.unknown")} />
+                <MetricRow label={t("hermes.started")} value={formatDateTime(selectedSession?.startedAt, locale)} />
+                <MetricRow label={t("hermes.ended")} value={selectedSession?.endedAt ? formatDateTime(selectedSession.endedAt, locale) : t("hermes.noEnd")} />
+              </CardContent>
+            </Card>
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>{t("section.inventory")}</CardTitle>
+                <CardDescription>{t("hermes.contextDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <MetricRow label={t("section.sessions")} value={String(context.sessions.length)} />
+                <MetricRow label={t("hermes.messages")} value={String(context.messages.length)} />
+                <MetricRow label={t("section.gatewayEvents")} value={String(context.gatewayEvents.length)} />
+                <MetricRow label={t("hermes.tokens")} value={formatHermesTokens(selectedSession)} />
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="hermes-context-grid">
+            <section className="hermes-context-panel">
+              <div className="hermes-context-panel-header">
+                <SectionLabel icon={Archive} label={t("section.hermesSessions")} />
+              </div>
+              <div className="hermes-session-list">
+                {context.sessions.map((session) => (
+                  <button
+                    className={cn("hermes-session-row", context.selectedSessionId === session.id && "hermes-session-row-active")}
+                    key={session.id}
+                    onClick={() => onSelectSession(session.id)}
+                    type="button"
+                  >
+                    <span>
+                      <strong>{session.id}</strong>
+                      <small>{[session.source, session.model, formatDateTime(session.startedAt, locale)].filter(Boolean).join(" / ")}</small>
+                    </span>
+                    <span className="hermes-session-meta">
+                      {session.messageCount}m / {session.toolCallCount}t
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="hermes-context-panel">
+              <div className="hermes-context-panel-header">
+                <SectionLabel icon={MessageSquare} label={t("section.hermesMessages")} />
+              </div>
+              <div className="hermes-message-list">
+                {context.messages.length ? (
+                  context.messages.map((message) => <HermesMessageRow key={message.id} message={message} />)
+                ) : (
+                  <EmptyWide label={t("empty.noHermesMessages")} />
+                )}
+              </div>
+            </section>
+
+            <section className="hermes-context-panel">
+              <div className="hermes-context-panel-header">
+                <SectionLabel icon={Terminal} label={t("section.gatewayEvents")} />
+              </div>
+              <div className="hermes-event-list">
+                {context.gatewayEvents.length ? (
+                  context.gatewayEvents.map((event) => <HermesGatewayEventRow event={event} key={event.id} locale={locale} />)
+                ) : (
+                  <EmptyWide label={t("empty.noGatewayEvents")} />
+                )}
+              </div>
+            </section>
+          </div>
+        </>
+      ) : (
+        <EmptyWide label={t("empty.noHermesContext")} />
+      )}
+    </div>
+  );
+}
+
+function HermesMessageRow({ message }: { message: HermesMessageSummary }) {
+  const text = message.contentPreview || message.toolCalls.map((tool) => `${tool.name} ${tool.argumentsPreview ?? ""}`).join("\n");
+  return (
+    <article className="hermes-message-row">
+      <div className="hermes-message-role">{message.role}</div>
+      <div className="hermes-message-body">
+        <strong>{message.toolName ?? message.finishReason ?? message.sessionId}</strong>
+        <p>{text || "empty"}</p>
+      </div>
+    </article>
+  );
+}
+
+function HermesGatewayEventRow({ event, locale }: { event: HermesGatewayEvent; locale: I18nLocale }) {
+  return (
+    <article className="hermes-event-row">
+      <div className="hermes-event-kind">{event.kind}</div>
+      <div className="hermes-event-body">
+        <strong>{[event.platform, event.chat, event.context].filter(Boolean).join(" / ") || event.logger || event.level}</strong>
+        <p>{event.message}</p>
+        <small>{formatDateTime(event.timestamp, locale)}</small>
+      </div>
+    </article>
+  );
+}
+
 function JobsView({ job }: { job: JobSnapshot | null }) {
+  const { t } = useI18n();
   return (
     <Card className="h-full min-h-[520px]">
       <CardHeader className="border-b">
-        <CardTitle>{job?.type ?? "No active job"}</CardTitle>
-        <CardDescription>{job ? job.command.join(" ") : "Run a board or cron task to stream output here."}</CardDescription>
+        <CardTitle>{job?.type ?? t("jobs.noActive")}</CardTitle>
+        <CardDescription>{job ? job.command.join(" ") : t("jobs.description")}</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         {job ? (
           <pre>{job.logs.join("\n") || job.command.join(" ")}</pre>
         ) : (
-          <div className="empty-state">No job output.</div>
+          <div className="empty-state">{t("empty.noJobOutput")}</div>
         )}
       </CardContent>
     </Card>
@@ -3443,18 +4748,19 @@ function SetupView({
   onRunMigration: () => void;
   openclaw?: RuntimeStatus;
 }) {
+  const { t } = useI18n();
   return (
     <div className="content-grid">
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Growth Agent</CardTitle>
-          <CardDescription>Hermes runtime surface</CardDescription>
+          <CardTitle>{t("setup.growthAgent")}</CardTitle>
+          <CardDescription>{t("setup.hermesRuntimeSurface")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <RuntimeLine runtime={hermes} label="Hermes" />
           <RuntimeLine runtime={openclaw} label="OpenClaw" />
-          <MetricRow label="Profile" value={hermes?.profileExists ? "ready" : "missing"} />
-          <MetricRow label="XHS skill" value={hermes?.skillInstalled ? "installed" : "missing"} />
+          <MetricRow label={t("common.profile")} value={hermes?.profileExists ? t("common.ready") : t("common.missing")} />
+          <MetricRow label="XHS skill" value={hermes?.skillInstalled ? t("common.installed") : t("common.missing")} />
           <Button className="w-full" disabled={busy === "bootstrap"} onClick={onBootstrap} type="button">
             {busy === "bootstrap" ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
             Bootstrap
@@ -3464,31 +4770,31 @@ function SetupView({
 
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Legacy Migration</CardTitle>
-          <CardDescription>Xiaohongshu workspace sync</CardDescription>
+          <CardTitle>{t("setup.legacyMigration")}</CardTitle>
+          <CardDescription>{t("setup.xhsWorkspaceSync")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <MetricRow label="Profiles" value={String(migration?.profiles.length ?? 0)} />
-          <MetricRow label="To copy" value={String(migration?.copyCount ?? 0)} />
-          <MetricRow label="Conflicts" value={String(migration?.conflictCount ?? 0)} />
+          <MetricRow label={t("common.profiles")} value={String(migration?.profiles.length ?? 0)} />
+          <MetricRow label={t("setup.toCopy")} value={String(migration?.copyCount ?? 0)} />
+          <MetricRow label={t("setup.conflicts")} value={String(migration?.conflictCount ?? 0)} />
           <Button className="w-full" disabled={!migration?.copyCount || busy === "migration"} onClick={onRunMigration} type="button">
             {busy === "migration" ? <Loader2 className="size-4 animate-spin" /> : <Copy className="size-4" />}
-            Run migration
+            {t("setup.runMigration")}
           </Button>
         </CardContent>
       </Card>
 
       <Card size="sm">
         <CardHeader>
-          <CardTitle>XHS CLI</CardTitle>
-          <CardDescription>Local auth state</CardDescription>
+          <CardTitle>{t("setup.xhsCli")}</CardTitle>
+          <CardDescription>{t("setup.localAuthState")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <MetricRow label="Installed" value={auth?.installed ? "yes" : "no"} />
-          <MetricRow label="Scope" value={auth?.scope ?? "global"} />
-          <MetricRow label="State" value={xhsAuthStateValue(auth)} />
-          <MetricRow label="Signed in" value={xhsSignedInValue(auth)} />
-          <MetricRow label="Account" value={xhsAccountValue(auth)} />
+          <MetricRow label={t("setup.installed")} value={auth?.installed ? t("common.yes") : t("common.no")} />
+          <MetricRow label={t("setup.scope")} value={auth?.scope ?? t("common.global")} />
+          <MetricRow label={t("setup.state")} value={xhsAuthStateValue(auth, t)} />
+          <MetricRow label={t("setup.signedIn")} value={xhsSignedInValue(auth, t)} />
+          <MetricRow label={t("setup.account")} value={xhsAccountValue(auth, t)} />
           {auth?.message ? <p className="text-xs leading-relaxed text-muted-foreground">{auth.message}</p> : null}
           <div className="grid grid-cols-2 gap-2">
             <Button disabled={busy?.startsWith("login")} onClick={() => onLogin("qrcode")} type="button" variant="outline">
@@ -3535,39 +4841,60 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function platformCliBadgeState(platform: SocialPlatformInfo): "ok" | "warn" | "bad" {
+  if (platform.cli.state === "available" && platform.cli.authenticated !== false) return "ok";
+  if (platform.cli.state === "missing") return "bad";
+  return "warn";
+}
+
+function platformCliBadgeLabel(platform: SocialPlatformInfo, t: TFunction): string {
+  if (platform.cli.state === "not-configured") return t("platform.cliNotConfigured", { platform: platform.shortLabel });
+  if (platform.cli.state === "missing") return t("platform.cliMissing", { platform: platform.shortLabel });
+  if (platform.cli.state === "degraded") return t("platform.cliUnknown", { platform: platform.shortLabel });
+  if (platform.cli.authenticated === true) return t("platform.cliSignedIn", { platform: platform.shortLabel });
+  if (platform.cli.authenticated === false) return t("platform.cliLoginNeeded", { platform: platform.shortLabel });
+  return t("platform.cliAvailable", { platform: platform.shortLabel });
+}
+
+function platformCliDetail(platform: SocialPlatformInfo, t: TFunction): string {
+  if (platform.cli.message) return platform.cli.message;
+  if (platform.cli.path) return platform.cli.path;
+  return platformCliBadgeLabel(platform, t);
+}
+
 function xhsAuthBadgeState(auth: XhsAuthStatus | null): "ok" | "warn" | "bad" {
   if (!auth) return "warn";
   if (!auth.installed) return "bad";
   return auth.authenticated ? "ok" : "warn";
 }
 
-function xhsAuthBadgeLabel(auth: XhsAuthStatus | null): string {
-  if (!auth) return "XHS auth unknown";
+function xhsAuthBadgeLabel(auth: XhsAuthStatus | null, t: TFunction): string {
+  if (!auth) return "XHS CLI unknown";
   if (!auth.installed) return "XHS CLI missing";
-  if (auth.authenticated) return "XHS signed in";
-  if (auth.guest || auth.state === "guest") return "XHS partial login";
-  return "XHS login needed";
+  if (auth.authenticated) return "XHS CLI signed in";
+  if (auth.guest || auth.state === "guest") return "XHS CLI partial";
+  return "XHS CLI login needed";
 }
 
-function xhsAuthStateValue(auth: XhsAuthStatus | null): string {
-  if (!auth) return "unknown";
-  if (!auth.installed) return "missing cli";
-  if (auth.state === "guest") return "partial";
-  return auth.state ?? (auth.authenticated ? "signed-in" : "missing");
+function xhsAuthStateValue(auth: XhsAuthStatus | null, t: TFunction): string {
+  if (!auth) return t("xhsAuth.unknown");
+  if (!auth.installed) return t("xhsAuth.missingCli");
+  if (auth.state === "guest") return t("xhsAuth.partial");
+  return auth.state ?? (auth.authenticated ? t("xhsAuth.signedIn") : t("xhsAuth.missing"));
 }
 
-function xhsSignedInValue(auth: XhsAuthStatus | null): string {
-  if (!auth) return "unknown";
-  if (auth.authenticated) return "yes";
-  if (auth.guest || auth.state === "guest") return "partial";
-  return "no";
+function xhsSignedInValue(auth: XhsAuthStatus | null, t: TFunction): string {
+  if (!auth) return t("common.unknown");
+  if (auth.authenticated) return t("common.yes");
+  if (auth.guest || auth.state === "guest") return t("common.partial");
+  return t("common.no");
 }
 
-function xhsAccountValue(auth: XhsAuthStatus | null): string {
-  if (!auth) return "unknown";
-  if (auth.authenticated) return auth.nickname ?? auth.redId ?? "signed-in";
-  if (auth.guest || auth.state === "guest") return "guest/partial";
-  return auth.nickname ?? "unknown";
+function xhsAccountValue(auth: XhsAuthStatus | null, t: TFunction): string {
+  if (!auth) return t("common.unknown");
+  if (auth.authenticated) return auth.nickname ?? auth.redId ?? t("xhsAuth.signedIn");
+  if (auth.guest || auth.state === "guest") return t("xhsAuth.guestPartial");
+  return auth.nickname ?? t("common.unknown");
 }
 
 function AgentList({
@@ -3579,6 +4906,7 @@ function AgentList({
   onSelectAgent?: (agentId: string) => void;
   selectedAgent?: SocialAgent;
 }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-1">
       {agents.map((agent) => {
@@ -3599,7 +4927,7 @@ function AgentList({
           </div>
         );
       })}
-      {!agents.length ? <EmptyCompact label="No agents" /> : null}
+      {!agents.length ? <EmptyCompact label={t("empty.noAgents")} /> : null}
     </div>
   );
 }
@@ -3693,8 +5021,14 @@ function deriveChatSessionTitle(message: string): string {
   return title.length > 46 ? `${title.slice(0, 43)}...` : title;
 }
 
-function displayChatSessionTitle(session: ChatSession): string {
-  return session.title.trim() || chatDefaultSessionTitle;
+function displayChatSessionTitle(session: ChatSession, t?: TFunction): string {
+  const title = session.title.trim();
+  if (!title || title === chatDefaultSessionTitle) return t?.("common.newSession") ?? chatDefaultSessionTitle;
+  return title;
+}
+
+function displayHermesSessionTitle(session: HermesSessionSummary): string {
+  return session.title?.trim() || session.model || session.id;
 }
 
 function countChatSessionMessages(session: ChatSession): number {
@@ -3724,20 +5058,31 @@ function isHermesChatEvent(value: unknown): value is HermesChatEvent {
   return isRecord(value) && typeof value.event === "string";
 }
 
-function topbarContext(activeView: DashboardView, selectedProfile: WorkspaceProfile | null): string {
-  if (activeView === "workspace") return `~/.growth/${selectedProfile?.profile ?? ""}/${selectedProfile?.platform ?? "xiaohongshu"}`;
-  if (activeView === "published") return selectedProfile ? `published xhs notes / ${selectedProfile.profile}` : "published xhs notes";
-  if (activeView === "replies") return selectedProfile ? `auto replies / ${selectedProfile.profile}` : "auto replies";
-  if (activeView === "chat") return "agent conversation";
-  if (activeView === "skills") return "Hermes profile skills";
-  if (activeView === "setup") return "runtime and auth";
-  return selectedProfile ? `${selectedProfile.platform}/${selectedProfile.profile}` : "social media operations";
+function topbarContext(activeView: DashboardView, selectedProfile: WorkspaceProfile | null, activePlatform: PlatformId, t: TFunction): string {
+  if (activeView === "workspace") {
+    return selectedProfile ? `~/.growth/${selectedProfile.profile}/${selectedProfile.platform}` : `~/.growth/${activePlatform}`;
+  }
+  if (activeView === "knowledge") return vaultWorkspaceRoot;
+  if (activeView === "published") return selectedProfile ? `${t("topbar.publishedNotes")} / ${selectedProfile.profile}` : t("topbar.publishedNotes");
+  if (activeView === "replies") return selectedProfile ? `${t("topbar.autoReplies")} / ${selectedProfile.profile}` : t("topbar.autoReplies");
+  if (activeView === "chat") return t("topbar.agentConversation");
+  if (activeView === "hermes") return t("topbar.hermesContext");
+  if (activeView === "skills") return t("topbar.profileSkills");
+  if (activeView === "setup") return t("topbar.runtimeAuth");
+  return selectedProfile ? `${selectedProfile.platform}/${selectedProfile.profile}` : t("topbar.socialOps");
 }
 
 function calendarState(status: SocialTaskCalendarItem["status"]): "ok" | "warn" | "bad" {
   if (status === "failed") return "bad";
   if (status === "done" || status === "scheduled") return "ok";
   return "warn";
+}
+
+function calendarStatusLabel(status: SocialTaskCalendarItem["status"], t: TFunction): string {
+  if (status === "scheduled") return t("section.scheduled");
+  if (status === "paused") return t("cron.status.paused");
+  if (status === "running") return t("board.status.running");
+  return t(boardStatusLabelKey[status]);
 }
 
 function groupByPlatform(profiles: WorkspaceProfile[]) {
@@ -3855,6 +5200,43 @@ function activeSkillMentionQuery(value: string): string | null {
 function insertSkillMention(value: string, skillName: string): string {
   const replacement = `$${skillName} `;
   return value.replace(/(^|\s)\$([a-zA-Z0-9_.:-]*)$/, (_match, prefix: string) => `${prefix}${replacement}`);
+}
+
+function setSkillMention(value: string, skillName: string, selected: boolean): string {
+  const mentionPattern = new RegExp(`(^|\\s)\\$${escapeRegExp(skillName)}(?=\\s|$)`, "gi");
+  const hasMention = mentionPattern.test(value);
+  if (selected) {
+    if (hasMention) return value;
+    const trimmed = value.trimStart();
+    return trimmed ? `$${skillName} ${trimmed}` : `$${skillName} `;
+  }
+  return value
+    .replace(mentionPattern, (_match, prefix: string) => prefix)
+    .replace(/[ \t]{2,}/g, " ")
+    .trimStart();
+}
+
+function removeSelectedSkillMentions(value: string, skills: HermesSkillInfo[]): string {
+  return skills
+    .reduce((next, skill) => next.replace(new RegExp(`(^|\\s)\\$${escapeRegExp(skill.name)}(?=\\s|$)`, "gi"), "$1"), value)
+    .replace(/[ \t]{2,}/g, " ")
+    .trimStart();
+}
+
+function mergeSelectedSkillMentions(value: string, skills: HermesSkillInfo[]): string {
+  const skillTokens = skills.map((skill) => `$${skill.name}`).join(" ");
+  const body = value.trimStart();
+  return [skillTokens, body].filter(Boolean).join(body && skillTokens ? " " : "");
+}
+
+function skillPickerLabel(skills: HermesSkillInfo[], t: TFunction): string {
+  if (!skills.length) return t("chat.selectSkillsShort");
+  if (skills.length === 1) return `$${skills[0].name}`;
+  return t("chat.selectedSkills", { count: skills.length });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractSkillMentionNames(value: string): string[] {
@@ -4127,6 +5509,21 @@ function truncateAttachmentContent(content: string): string {
   return `${content.slice(0, chatAttachmentMaxChars)}\n\n[truncated:${content.length - chatAttachmentMaxChars} chars]`;
 }
 
+function buildHermesContextAttachmentContent(context: HermesContextSnapshot): string {
+  return JSON.stringify(
+    {
+      generatedAt: context.generatedAt,
+      selectedSessionId: context.selectedSessionId,
+      sourcePaths: context.sourcePaths,
+      sessions: context.sessions,
+      messages: context.messages,
+      gatewayEvents: context.gatewayEvents
+    },
+    null,
+    2
+  );
+}
+
 function summarizeAttachments(attachments: ChatAttachment[]): string {
   return attachments.map((attachment) => `[attachment] ${attachment.name}`).join("\n");
 }
@@ -4140,6 +5537,43 @@ function buildChatMessageWithAttachments(message: string, attachments: ChatAttac
     )
     .join("\n\n");
   return [message, "Attached local context:", rendered].filter(Boolean).join("\n\n");
+}
+
+function buildVaultWorkspaceChatMessage(message: string, artifact: ArtifactContent | null): string {
+  const selectedPath = artifact?.artifact.path;
+  const selectedContent = artifact?.content;
+  return [
+    "Vault workspace mode.",
+    `Vault root: ${vaultWorkspaceRoot}`,
+    selectedPath ? `Current preview path: ${selectedPath}` : "Current preview path: none",
+    "You may modify files only under ~/.growth/vault.",
+    "Prefer editing the referenced or current preview note. Do not rename, delete, or move files unless explicitly requested.",
+    "After edits, report changed paths and the reason for each change.",
+    selectedPath && selectedContent
+      ? ["", `Current preview content (${selectedPath}):`, fencedContent(selectedContent, artifact.artifact.mime === "markdown" ? "markdown" : "text")].join(
+          "\n"
+        )
+      : "",
+    "",
+    "User request:",
+    message
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildVaultAttachmentContent(artifact: ArtifactContent): string {
+  return [
+    `Vault root: ${vaultWorkspaceRoot}`,
+    `Vault path: ${artifact.artifact.path}`,
+    "This file is under the allowed vault workspace. Prefer this file when the user asks to modify the referenced document.",
+    "",
+    fencedContent(artifact.content ?? "", artifact.artifact.mime === "markdown" ? "markdown" : "text")
+  ].join("\n");
+}
+
+function fencedContent(content: string, language: string): string {
+  return `\`\`\`${language}\n${content.replaceAll("```", "\\`\\`\\`")}\n\`\`\``;
 }
 
 function buildImageGenerationChatMessage(message: string, attachments: ChatAttachment[]): string {
@@ -4177,13 +5611,21 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return candidate.SpeechRecognition ?? candidate.webkitSpeechRecognition ?? null;
 }
 
-function createSpeechRecognition({ onEnd, onResult }: { onEnd: () => void; onResult: (text: string) => void }): SpeechRecognitionInstance | null {
+function createSpeechRecognition({
+  locale,
+  onEnd,
+  onResult
+}: {
+  locale: I18nLocale;
+  onEnd: () => void;
+  onResult: (text: string) => void;
+}): SpeechRecognitionInstance | null {
   const Constructor = getSpeechRecognitionConstructor();
   if (!Constructor) return null;
   const recognition = new Constructor();
   recognition.continuous = false;
   recognition.interimResults = false;
-  recognition.lang = navigator.language || "zh-CN";
+  recognition.lang = speechLocale(locale);
   recognition.onend = onEnd;
   recognition.onerror = onEnd;
   recognition.onresult = (event) => {
@@ -4215,6 +5657,9 @@ function artifactPreviewUrl(artifact: ArtifactInfo): string {
 }
 
 function artifactRawUrl(platform: string, profile: string, path: string): string {
+  if (platform === vaultWorkspacePlatform && profile === vaultWorkspaceProfile) {
+    return `/api/vault/artifact/raw?path=${encodeURIComponent(path)}`;
+  }
   return `/api/platforms/${encodeURIComponent(platform)}/profiles/${encodeURIComponent(profile)}/artifact/raw?path=${encodeURIComponent(path)}`;
 }
 
@@ -4238,9 +5683,9 @@ function normalizeArtifactPath(path: string): string {
   return parts.join("/");
 }
 
-function formatDateTime(value?: string): string {
-  if (!value) return "not scheduled";
-  return new Intl.DateTimeFormat(undefined, {
+function formatDateTime(value: string | undefined, locale: I18nLocale): string {
+  if (!value) return locale === "en" ? "not scheduled" : locale === "zh-Hant" ? "未排程" : "未排期";
+  return new Intl.DateTimeFormat(intlLocale(locale), {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
@@ -4248,9 +5693,9 @@ function formatDateTime(value?: string): string {
   }).format(new Date(value));
 }
 
-function formatPublishedDate(value?: string): string {
-  if (!value) return "未记录时间";
-  return new Intl.DateTimeFormat("zh-Hans", {
+function formatPublishedDate(value: string | undefined, locale: I18nLocale): string {
+  if (!value) return locale === "en" ? "No timestamp" : locale === "zh-Hant" ? "未記錄時間" : "未记录时间";
+  return new Intl.DateTimeFormat(intlLocale(locale), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -4263,6 +5708,17 @@ function formatCompactNumber(value?: number): string {
   if (value >= 10000) return `${(value / 10000).toFixed(value >= 100000 ? 0 : 1)}w`;
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
   return String(value);
+}
+
+function formatTokenBudget(value: number): string {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(value >= 10000000 ? 0 : 1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}K`;
+  return String(Math.round(value));
+}
+
+function formatHermesTokens(session: HermesSessionSummary | undefined): string {
+  if (!session) return "0";
+  return formatTokenBudget(session.tokens.input + session.tokens.output + session.tokens.cacheRead + session.tokens.cacheWrite + session.tokens.reasoning);
 }
 
 function publishedStatusState(status: XhsPublishedPostStatus): "ok" | "warn" | "bad" {
@@ -4288,38 +5744,91 @@ function publishedCardAspect(index: number, post: XhsPublishedPost): string {
   return index % 5 === 0 ? "4 / 5" : index % 4 === 0 ? "1 / 1" : "3 / 4";
 }
 
-function formatCalendarDay(value: Date): string {
-  return new Intl.DateTimeFormat(undefined, {
+function formatCalendarDay(value: Date, locale: I18nLocale): string {
+  return new Intl.DateTimeFormat(intlLocale(locale), {
     month: "short",
     day: "2-digit"
   }).format(value);
 }
 
-function formatWeekday(value: Date): string {
-  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(value);
+function formatWeekday(value: Date, locale: I18nLocale): string {
+  return new Intl.DateTimeFormat(intlLocale(locale), { weekday: "short" }).format(value);
 }
 
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+function formatTime(value: string, locale: I18nLocale): string {
+  return new Intl.DateTimeFormat(intlLocale(locale), {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
 }
 
-function calendarWeekStart(items: SocialTaskCalendarItem[]): Date {
-  const today = startOfLocalDay(new Date());
-  const currentWeekStart = startOfWeek(today);
+function resolveDefaultCalendarWeekStart(items: SocialTaskCalendarItem[], jobs: SocialCronJob[]): Date {
+  const currentWeekStart = startOfWeek(new Date());
   const currentWeekEnd = addDays(currentWeekStart, 7);
-  const hasCurrentWeekItems = items.some((item) => {
-    const startsAt = new Date(item.startsAt);
-    return startsAt >= currentWeekStart && startsAt < currentWeekEnd;
-  });
-  if (hasCurrentWeekItems || !items.length) return currentWeekStart;
+  const candidateDates = [
+    ...items.map((item) => new Date(item.startsAt)),
+    ...jobs.filter((job) => job.enabled && job.nextRunAt).map((job) => new Date(job.nextRunAt as string))
+  ].filter((date) => !Number.isNaN(date.getTime()));
+  const hasCurrentWeekItems = candidateDates.some((date) => isDateInRange(date, currentWeekStart, currentWeekEnd));
+  if (hasCurrentWeekItems || !candidateDates.length) return currentWeekStart;
 
-  const firstItem = items
-    .map((item) => new Date(item.startsAt))
-    .sort((a, b) => a.getTime() - b.getTime())[0];
-  return startOfWeek(firstItem);
+  const firstDate = candidateDates.sort((a, b) => a.getTime() - b.getTime())[0];
+  return startOfWeek(firstDate);
+}
+
+function buildCalendarWeekItems(items: SocialTaskCalendarItem[], jobs: SocialCronJob[], weekStart: Date): SocialTaskCalendarItem[] {
+  const weekEnd = addDays(weekStart, 7);
+  const storedCronItems = new Map(items.filter((item) => item.source === "cron").map((item) => [item.id, item]));
+  const projectedDailyCronIds = new Set(
+    jobs.filter((job) => job.enabled && job.schedule.kind === "daily" && Boolean(job.schedule.time)).map((job) => job.id)
+  );
+  const storedItems = items.filter((item) => {
+    const startsAt = new Date(item.startsAt);
+    if (!isDateInRange(startsAt, weekStart, weekEnd)) return false;
+    return item.source !== "cron" || !projectedDailyCronIds.has(item.id);
+  });
+  const projectedCronItems = jobs.flatMap((job) => projectDailyCronJob(job, weekStart, storedCronItems.get(job.id)?.runner));
+  return [...projectedCronItems, ...storedItems].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+}
+
+function projectDailyCronJob(job: SocialCronJob, weekStart: Date, runner?: SocialTaskCalendarItem["runner"]): SocialTaskCalendarItem[] {
+  if (!job.enabled || job.schedule.kind !== "daily" || !job.schedule.time) return [];
+
+  const [hour, minute] = job.schedule.time.split(":").map(Number);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return [];
+
+  const createdAt = new Date(job.createdAt);
+  const earliest = Number.isNaN(createdAt.getTime()) ? startOfLocalDay(new Date()) : createdAt;
+  const today = startOfLocalDay(new Date());
+
+  return Array.from({ length: 7 }).flatMap((_, index): SocialTaskCalendarItem[] => {
+    const startsAt = addDays(weekStart, index);
+    startsAt.setHours(hour, minute, 0, 0);
+    if (startsAt < earliest || startsAt < today) return [];
+    const status: SocialTaskCalendarItem["status"] =
+      job.state === "running" || job.state === "failed" || job.state === "paused" ? job.state : "scheduled";
+    return [
+      {
+        id: `${job.id}:${startsAt.toISOString().slice(0, 10)}`,
+        source: "cron",
+        cronSource: job.source ?? "growth",
+        readOnly: job.readOnly,
+        title: job.name,
+        startsAt: startsAt.toISOString(),
+        agentId: job.agentId,
+        runner: runner ?? (job.source === "hermes" ? "hermes" : "local"),
+        llm: job.llm,
+        platform: job.platform,
+        profile: job.profile,
+        taskType: job.taskType,
+        status
+      }
+    ];
+  });
+}
+
+function isDateInRange(value: Date, start: Date, end: Date): boolean {
+  return value >= start && value < end;
 }
 
 function startOfWeek(value: Date): Date {

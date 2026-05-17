@@ -11,15 +11,20 @@ import {
 
 import type { AppConfig } from "./config";
 import { commandExists, redact, runCommand } from "./shell";
-import { assertSafeSegment, profileRoot, safeStat } from "./workspace";
+import { assertSafeSegment, profileRoot, safeStat, xhsDocumentRoot } from "./workspace";
 
 const XHS_PUBLISHED_POSTS_SCHEMA_VERSION = 1;
 const XHS_MY_NOTES_MAX_PAGES = 10;
 
 interface XhsPublishedPostStore {
   schemaVersion: typeof XHS_PUBLISHED_POSTS_SCHEMA_VERSION;
-  posts: XhsPublishedPost[];
+  posts: StoredXhsPublishedPost[];
 }
+
+export type StoredXhsPublishedPost = XhsPublishedPost & {
+  xsecToken?: string;
+  xsecSource?: string;
+};
 
 export interface UpdateXhsPublishedPostInput {
   status?: XhsPublishedPostStatus;
@@ -41,9 +46,14 @@ interface UpsertXhsPublishedPostOptions {
   reconcileMissing?: boolean;
 }
 
-export function listXhsPublishedPosts(config: AppConfig, profile: string): XhsPublishedPost[] {
+export function listXhsPublishedPosts(config: AppConfig, profile: string): StoredXhsPublishedPost[] {
   assertProfileExists(config, profile);
   return sortPosts(mergePostLists(readStore(config, profile).posts, readMetricsPosts(config, profile)));
+}
+
+export function toPublicXhsPublishedPost(post: StoredXhsPublishedPost): XhsPublishedPost {
+  const { xsecToken, xsecSource, ...publicPost } = post;
+  return publicPost;
 }
 
 export async function refreshXhsPublishedPostsFromCli(config: AppConfig, profile: string): Promise<XhsPublishedPostsSyncResult> {
@@ -133,7 +143,7 @@ export function updateXhsPublishedPost(
   return updated;
 }
 
-export function normalizeXhsPublishedPostItem(profile: string, item: Record<string, unknown>, syncedAt: string): XhsPublishedPost {
+export function normalizeXhsPublishedPostItem(profile: string, item: Record<string, unknown>, syncedAt: string): StoredXhsPublishedPost {
   const card = objectValue(item.note_card) ?? item;
   const interact = objectValue(card.interact_info) ?? objectValue(item.interact_info) ?? objectValue(card.interactions) ?? {};
   const imageList = arrayValue(card.image_list) ?? arrayValue(item.image_list) ?? arrayValue(card.images_list) ?? arrayValue(item.images_list) ?? [];
@@ -151,6 +161,8 @@ export function normalizeXhsPublishedPostItem(profile: string, item: Record<stri
     normalizeUrl(firstString(coverObject?.url, coverObject?.master_url, card.cover_url, item.cover_url, deepString(imageList[0], "url"))) ??
     undefined;
   const url = normalizeUrl(firstString(item.url, item.share_url, card.url, card.share_url)) ?? (rawId ? `https://www.xiaohongshu.com/explore/${rawId}` : undefined);
+  const xsecToken = cleanOptionalString(firstString(item.xsec_token, item.xsecToken, card.xsec_token, card.xsecToken));
+  const xsecSource = cleanOptionalString(firstString(item.xsec_source, item.xsecSource, card.xsec_source, card.xsecSource));
 
   return {
     id,
@@ -168,7 +180,9 @@ export function normalizeXhsPublishedPostItem(profile: string, item: Record<stri
     updatedAt: syncedAt,
     status: "published",
     source: "xhs-cli",
-    stats: normalizeStats(interact, card, item)
+    stats: normalizeStats(interact, card, item),
+    xsecToken,
+    xsecSource
   };
 }
 
@@ -233,8 +247,10 @@ async function fetchXhsMyNotes(xhs: string): Promise<{ items: Array<Record<strin
   return { items, skipped };
 }
 
-function readMetricsPosts(config: AppConfig, profile: string): XhsPublishedPost[] {
-  const path = join(profileRoot(config, XIAOHONGSHU_PLATFORM, profile), "metrics.csv");
+function readMetricsPosts(config: AppConfig, profile: string): StoredXhsPublishedPost[] {
+  const documentMetricsPath = join(xhsDocumentRoot(config, profile), "metrics.csv");
+  const legacyMetricsPath = join(profileRoot(config, XIAOHONGSHU_PLATFORM, profile), "metrics.csv");
+  const path = existsSync(documentMetricsPath) ? documentMetricsPath : legacyMetricsPath;
   if (!existsSync(path)) return [];
   const rows = parseCsv(readFileSync(path, "utf8"));
   const [header, ...body] = rows;
@@ -266,7 +282,7 @@ function readMetricsPosts(config: AppConfig, profile: string): XhsPublishedPost[
           comments: parseVisibleCount(row.comments),
           shares: parseVisibleCount(row.shares)
         }
-      } satisfies XhsPublishedPost;
+      } satisfies StoredXhsPublishedPost;
     });
 }
 
@@ -291,14 +307,16 @@ function writeStore(config: AppConfig, profile: string, store: XhsPublishedPostS
   renameSync(tmp, path);
 }
 
-function normalizeStoredPost(post: XhsPublishedPost): XhsPublishedPost {
+function normalizeStoredPost(post: StoredXhsPublishedPost): StoredXhsPublishedPost {
   return {
     ...post,
     platform: XIAOHONGSHU_PLATFORM,
     status: normalizeStatus(post.status) ?? "published",
     source: post.source ?? "manual",
     stats: post.stats ?? {},
-    updatedAt: post.updatedAt ?? new Date().toISOString()
+    updatedAt: post.updatedAt ?? new Date().toISOString(),
+    xsecToken: cleanOptionalString(post.xsecToken),
+    xsecSource: cleanOptionalString(post.xsecSource)
   };
 }
 
@@ -312,14 +330,14 @@ function appendStatusNote(current: string | undefined, note: string): string {
   return current ? `${current}; ${note}` : note;
 }
 
-function mergePostLists(primary: XhsPublishedPost[], secondary: XhsPublishedPost[]): XhsPublishedPost[] {
-  const byId = new Map<string, XhsPublishedPost>();
+function mergePostLists(primary: StoredXhsPublishedPost[], secondary: StoredXhsPublishedPost[]): StoredXhsPublishedPost[] {
+  const byId = new Map<string, StoredXhsPublishedPost>();
   for (const post of secondary) byId.set(post.id, post);
   for (const post of primary) byId.set(post.id, post);
   return [...byId.values()];
 }
 
-function sortPosts(posts: XhsPublishedPost[]): XhsPublishedPost[] {
+function sortPosts(posts: StoredXhsPublishedPost[]): StoredXhsPublishedPost[] {
   return [...posts].sort((a, b) => {
     const left = a.publishedAt ?? a.syncedAt ?? a.updatedAt;
     const right = b.publishedAt ?? b.syncedAt ?? b.updatedAt;

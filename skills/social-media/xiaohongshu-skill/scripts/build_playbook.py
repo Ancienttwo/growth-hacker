@@ -46,7 +46,7 @@ def extract_client_name(client_dir: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--client-dir", required=True, help="Path to ~/.growth/<profile>/xiaohongshu/")
+    parser.add_argument("--client-dir", required=True, help="Path to ~/.growth/vault/<profile>/xiaohongshu/")
     parser.add_argument("--output", help="Output path (default: <client-dir>/playbook.md)")
     args = parser.parse_args()
 

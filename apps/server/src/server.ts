@@ -16,6 +16,7 @@ import {
   stopHermesRun,
   streamHermesRunEvents
 } from "./hermesChat";
+import { readHermesContextSnapshot } from "./hermesContext";
 import { JobStore } from "./jobs";
 import { planXiaohongshuLegacyMigration, runXiaohongshuLegacyMigration } from "./migration";
 import { listHermesProfileSkills, updateHermesProfileSkill } from "./hermesSkills";
@@ -29,6 +30,7 @@ import {
   updateSocialBoardTask
 } from "./socialBoard";
 import { listSocialTaskCalendar } from "./socialCalendar";
+import { listSocialPlatforms } from "./socialPlatforms";
 import {
   SOCIAL_CRON_TASK_TYPES,
   createSocialCronJob,
@@ -43,12 +45,16 @@ import {
 import {
   artifactContentType,
   ensureGrowthRoot,
+  ensureXhsWorkspaceForAuth,
   isPreviewableArtifact,
   listArtifacts,
+  listVaultArtifacts,
   listWorkspaces,
   readArtifact,
   readManifest,
-  resolveArtifact
+  readVaultArtifact,
+  resolveArtifact,
+  resolveVaultArtifact
 } from "./workspace";
 import { getXhsAuthStatus, startXhsLogin } from "./xhs";
 import {
@@ -57,7 +63,7 @@ import {
   updateXhsAutoReplyItem,
   updateXhsAutoReplySettings
 } from "./xhsAutoReplies";
-import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, updateXhsPublishedPost } from "./xhsPublished";
+import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, toPublicXhsPublishedPost, updateXhsPublishedPost } from "./xhsPublished";
 
 export function createApp() {
   const config = loadConfig();
@@ -68,7 +74,16 @@ export function createApp() {
 
   app.get("/api/health", (c) => c.json({ ok: true, growthRoot: config.growthRoot }));
 
-  app.get("/api/workspaces", (c) => c.json({ manifest: readManifest(config), profiles: listWorkspaces(config) }));
+  app.get("/api/platforms", async (c) => c.json({ platforms: await listSocialPlatforms(config) }));
+
+  app.get("/api/workspaces", async (c) => {
+    let profiles = listWorkspaces(config);
+    if (!profiles.some((profile) => profile.platform === "xiaohongshu")) {
+      ensureXhsWorkspaceForAuth(config, await getXhsAuthStatus());
+      profiles = listWorkspaces(config);
+    }
+    return c.json({ manifest: readManifest(config), profiles });
+  });
 
   app.post("/api/migrations/xiaohongshu-legacy/plan", (c) => c.json(planXiaohongshuLegacyMigration(config)));
 
@@ -87,6 +102,23 @@ export function createApp() {
       return c.json(await listHermesModelOptions(config));
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "list_hermes_models_failed" }, 400);
+    }
+  });
+
+  app.get("/api/hermes/context", (c) => {
+    try {
+      return c.json(
+        readHermesContextSnapshot(config, {
+          gatewayLimit: parseQueryInteger(c.req.query("gatewayLimit")),
+          limit: parseQueryInteger(c.req.query("limit")),
+          messageLimit: parseQueryInteger(c.req.query("messageLimit")),
+          query: c.req.query("query"),
+          sessionId: c.req.query("sessionId"),
+          source: c.req.query("source")
+        })
+      );
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "read_hermes_context_failed" }, 400);
     }
   });
 
@@ -169,7 +201,11 @@ export function createApp() {
     }
   });
 
-  app.get("/api/platforms/xiaohongshu/auth", async (c) => c.json(await getXhsAuthStatus()));
+  app.get("/api/platforms/xiaohongshu/auth", async (c) => {
+    const auth = await getXhsAuthStatus();
+    ensureXhsWorkspaceForAuth(config, auth);
+    return c.json(auth);
+  });
 
   app.post("/api/platforms/xiaohongshu/login", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { mode?: "qrcode" | "browser" };
@@ -222,9 +258,61 @@ export function createApp() {
     }
   });
 
+  app.get("/api/vault/artifacts", (c) => {
+    try {
+      return c.json({ artifacts: listVaultArtifacts(config) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_vault_artifacts_failed" }, 400);
+    }
+  });
+
+  app.get("/api/vault/artifact", (c) => {
+    try {
+      return c.json(readVaultArtifact(config, c.req.query("path") ?? ""));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "read_vault_artifact_failed" }, 400);
+    }
+  });
+
+  app.get("/api/vault/artifact/raw", (c) => {
+    const path = c.req.query("path") ?? "";
+    try {
+      const { info, target } = resolveVaultArtifact(config, path);
+      if (!isPreviewableArtifact(info)) return c.json({ error: "artifact_preview_unavailable" }, 415);
+
+      const file = Bun.file(target);
+      const headers = previewHeaders(info.size, artifactContentType(target));
+      const range = parseByteRange(c.req.header("range"), info.size);
+      if (range === "invalid") {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            "Accept-Ranges": "bytes",
+            "Content-Range": `bytes */${info.size}`
+          }
+        });
+      }
+
+      if (range) {
+        return new Response(file.slice(range.start, range.end + 1), {
+          status: 206,
+          headers: {
+            ...headers,
+            "Content-Length": String(range.end - range.start + 1),
+            "Content-Range": `bytes ${range.start}-${range.end}/${info.size}`
+          }
+        });
+      }
+
+      return new Response(file, { headers });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "vault_artifact_preview_failed" }, 400);
+    }
+  });
+
   app.get("/api/platforms/xiaohongshu/profiles/:profile/published-posts", (c) => {
     try {
-      return c.json({ posts: listXhsPublishedPosts(config, c.req.param("profile")) });
+      return c.json({ posts: listXhsPublishedPosts(config, c.req.param("profile")).map(toPublicXhsPublishedPost) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "list_published_posts_failed" }, 400);
     }
@@ -232,7 +320,8 @@ export function createApp() {
 
   app.post("/api/platforms/xiaohongshu/profiles/:profile/published-posts/sync", async (c) => {
     try {
-      return c.json(await refreshXhsPublishedPostsFromCli(config, c.req.param("profile")), 202);
+      const result = await refreshXhsPublishedPostsFromCli(config, c.req.param("profile"));
+      return c.json({ ...result, posts: result.posts.map(toPublicXhsPublishedPost) }, 202);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "sync_published_posts_failed" }, 400);
     }
@@ -240,7 +329,7 @@ export function createApp() {
 
   app.patch("/api/platforms/xiaohongshu/profiles/:profile/published-posts/:id", async (c) => {
     try {
-      return c.json({ post: updateXhsPublishedPost(config, c.req.param("profile"), c.req.param("id"), await c.req.json()) });
+      return c.json({ post: toPublicXhsPublishedPost(updateXhsPublishedPost(config, c.req.param("profile"), c.req.param("id"), await c.req.json())) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "update_published_post_failed" }, 400);
     }
@@ -480,6 +569,12 @@ function chatErrorResponse(error: unknown, fallbackMessage: string): Response {
 function requireBodyString(value: unknown, field: string): string {
   if (typeof value === "string" && value.trim()) return value;
   throw new Error(`${field}_required`);
+}
+
+function parseQueryInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const next = Number(value);
+  return Number.isInteger(next) ? next : undefined;
 }
 
 interface ByteRange {

@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import type { RuntimeStatus } from "@growth-hacker/core";
 
@@ -91,7 +91,10 @@ export async function bootstrapGrowthAgent(config: AppConfig) {
     mkdirSync(join(config.hermesHome, "profiles", config.defaultHermesProfile, "skills", "social-media"), { recursive: true });
     cpSync(config.bundledXiaohongshuSkillRoot, target, {
       recursive: true,
-      filter: (source) => !source.includes("__pycache__") && !source.includes(".pytest_cache")
+      filter: (source) => {
+        const parts = relative(config.bundledXiaohongshuSkillRoot, source).split(sep);
+        return !parts.some((part) => part === "__pycache__" || part === ".pytest_cache" || part === "dist");
+      }
     });
     syncedSkill = true;
   }

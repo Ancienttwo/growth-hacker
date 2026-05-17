@@ -6,7 +6,8 @@ This repository packages a Codex skill plus supporting references, templates, ev
 
 ## What It Does
 
-- Initializes a standard client workspace under `~/.growth/<profile>/xiaohongshu/`
+- Initializes a distilled client workspace under `~/.growth/vault/<profile>/xiaohongshu/`
+- Keeps reusable Xiaohongshu corpus under `~/.growth/vault/_library/xiaohongshu/`
 - Uses `xiaohongshu-cli` for live Xiaohongshu search, note reads, comments, and account evidence
 - Generates structured delivery artifacts for launch and daily ops
 - Scores note performance from `metrics.csv` and writes a health report
@@ -14,12 +15,38 @@ This repository packages a Codex skill plus supporting references, templates, ev
 - Learns recurring client edits and turns them into playbook rules
 - Builds a distributable OpenClaw bundle in `dist/openclaw/`
 
-## Workspace Model
+## Vault Content Model
 
-Every client lives in one directory:
+The vault separates reusable platform corpus from profile-specific execution state:
 
 ```text
-~/.growth/<profile>/xiaohongshu/
+~/.growth/vault/
+├── _library/
+│   ├── xiaohongshu/
+│   │   ├── raw/
+│   │   ├── evidence/
+│   │   ├── personas/
+│   │   ├── content-patterns/
+│   │   ├── platform-rules/
+│   │   └── benchmarks/
+│   └── _shared/
+│       ├── offers/
+│       ├── brand-assets/
+│       └── cross-platform-insights/
+└── <profile>/
+    └── xiaohongshu/
+```
+
+Use `_library/xiaohongshu/` for reusable Xiaohongshu market research, app-specific personas, benchmark patterns, and platform rules. A future Facebook skill should use `_library/facebook/` for Facebook-specific personas and benchmarks instead of sharing a generic persona folder.
+
+Use `_library/_shared/` only for true cross-platform inputs such as offers, brand assets, and cross-platform observations. Do not put platform-specific user personas there.
+
+## Workspace Model
+
+Every distilled Xiaohongshu client workspace lives in one directory:
+
+```text
+~/.growth/vault/<profile>/xiaohongshu/
 ├── 01-client-brief.md
 ├── 02-competitor-analysis.md
 ├── 03-account-strategy.md
@@ -33,7 +60,7 @@ Every client lives in one directory:
 └── lessons/
 ```
 
-Workspaces live outside the skill repo under the system user home, so operator data does not ship with the skill itself.
+Workspaces and libraries live outside the skill repo under the system user home, so operator data does not ship with the skill itself.
 
 ## Requirements
 
@@ -77,7 +104,7 @@ python3 scripts/init_client_workspace.py \
 Check what is missing for one client:
 
 ```bash
-python3 scripts/diagnose_workspace.py --client-dir ~/.growth/clear-skin-lab/xiaohongshu
+python3 scripts/diagnose_workspace.py --client-dir ~/.growth/vault/clear-skin-lab/xiaohongshu
 ```
 
 Check the full studio queue:
@@ -90,16 +117,18 @@ Collect live Xiaohongshu research into the competitor analysis:
 
 ```bash
 python3 scripts/collect_xhs_research.py \
-  --brief ~/.growth/clear-skin-lab/xiaohongshu/01-client-brief.md \
-  --output ~/.growth/clear-skin-lab/xiaohongshu/02-competitor-analysis.md
+  --brief ~/.growth/vault/clear-skin-lab/xiaohongshu/01-client-brief.md \
+  --output ~/.growth/vault/clear-skin-lab/xiaohongshu/02-competitor-analysis.md
 ```
+
+If the research is a reusable market corpus rather than a client-specific task, place raw or semi-raw evidence under `~/.growth/vault/_library/xiaohongshu/evidence/<date>-<topic>/` and distill only selected takeaways into the client workspace.
 
 Generate or refresh a health report:
 
 ```bash
 python3 scripts/score_health.py \
-  --metrics ~/.growth/clear-skin-lab/xiaohongshu/metrics.csv \
-  --output ~/.growth/clear-skin-lab/xiaohongshu/06-health-report.md
+  --metrics ~/.growth/vault/clear-skin-lab/xiaohongshu/metrics.csv \
+  --output ~/.growth/vault/clear-skin-lab/xiaohongshu/06-health-report.md
 ```
 
 Build the OpenClaw distribution:
@@ -143,7 +172,7 @@ python3 scripts/build_openclaw.py
 
 Read-only commands (`search`, `read`, `comments`, `user`, `user-posts`, `my-notes`, `topics`, `hot`) may run as part of live research after auth preflight.
 
-Write commands (`post`, `delete`, `like`, `favorite`, `comment`, `reply`, `follow`, `unfollow`) require an explicit user request for that specific action. Before a write command, confirm the active account with `xhs whoami --json`; after it runs, append the result or error code to `~/.growth/<profile>/xiaohongshu/xhs-action-log.md`.
+Write commands (`post`, `delete`, `like`, `favorite`, `comment`, `reply`, `follow`, `unfollow`) require an explicit user request for that specific action. For publishing, keep review drafts in Markdown but use `scripts/publish_note.py` as the publish boundary: dry-run first, convert Markdown to Xiaohongshu-native plain text, reject leaked Markdown markers, then run with `--post` only after explicit authorization. Other write commands must confirm the active account with `xhs whoami --json`; after any write, append the result or error code to `~/.growth/vault/<profile>/xiaohongshu/xhs-action-log.md`.
 
 Dashboard-managed auto-reply must default to draft-only mode. It may send `xhs reply` only when the operator explicitly switches that profile to send mode in the dashboard settings.
 
@@ -177,6 +206,7 @@ Key files:
 - `scripts/init_client_workspace.py`: create a standard client folder from templates
 - `scripts/check_xhs_dependency.py`: verify `xiaohongshu-cli>=0.6.4`, read-only research commands via `--research`, full write-capable commands by default, and optional auth
 - `scripts/xhs_cli_utils.py`: run `xhs --json` and validate the `ok/schema_version/data/error` envelope
+- `scripts/publish_note.py`: publish an approved Markdown draft safely; converts Markdown to Xiaohongshu-native plain text, dry-runs by default, requires `--post` for the actual write action, logs the result, verifies via `my-notes`, and appends initial metrics
 - `scripts/collect_xhs_research.py`: collect live search, note, and comment evidence into `02-competitor-analysis.md`
 - `scripts/prepare_competitor_analysis.py`: generate a research brief for `02-competitor-analysis.md`
 - `scripts/generate_account_strategy.py`: generate `03-account-strategy.md`

@@ -20,7 +20,7 @@ REQUIRED_FILES = [
 ]
 
 PLATFORM = "xiaohongshu"
-INTERNAL_PROFILE_DIRS = {"migrations", "published-posts", "social-board", "social-cron", "vault"}
+INTERNAL_PROFILE_DIRS = {"_library", "migrations", "published-posts", "social-board", "social-cron", "vault"}
 
 
 def default_workspace_root() -> Path:
@@ -45,13 +45,39 @@ def discover_workspace_dirs(root: Path) -> list[Path]:
         return []
     if root.name == PLATFORM and any((root / name).exists() for name in REQUIRED_FILES):
         return [root]
-    if root.name == PLATFORM and root.parent.name == ".growth":
+    if root.name == PLATFORM and root.parent.name in {".growth", "vault"}:
         return [path for path in sorted(root.iterdir()) if path.is_dir()]
-    return [
+
+    discovered = []
+    vault_root = root / "vault"
+    if vault_root.is_dir():
+        discovered.extend(discover_workspace_dirs(vault_root))
+
+    legacy_platform_root = root / PLATFORM
+    if legacy_platform_root.is_dir():
+        discovered.extend(discover_workspace_dirs(legacy_platform_root))
+
+    discovered.extend(
         path / PLATFORM
         for path in sorted(root.iterdir())
-        if path.is_dir() and path.name not in INTERNAL_PROFILE_DIRS and (path / PLATFORM).is_dir()
-    ]
+        if path.is_dir() and path.name not in INTERNAL_PROFILE_DIRS and path.name != PLATFORM and (path / PLATFORM).is_dir()
+    )
+
+    by_profile: dict[str, Path] = {}
+    for path in discovered:
+        profile = profile_from_client_dir(path)
+        current = by_profile.get(profile)
+        if current is None or workspace_layout_priority(path) > workspace_layout_priority(current):
+            by_profile[profile] = path
+    return list(by_profile.values())
+
+
+def workspace_layout_priority(client_dir: Path) -> int:
+    if client_dir.name == PLATFORM and client_dir.parent.parent.name == "vault":
+        return 3
+    if client_dir.parent.name == PLATFORM and client_dir.parent.parent.name == "vault":
+        return 2
+    return 1
 
 
 def normalize_client_dir(path: Path) -> Path:
@@ -163,7 +189,7 @@ def print_text_report(result: dict[str, object]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client-dir", help="Path to one client workspace")
-    parser.add_argument("--root", help="Workspace root containing <profile>/<platform>/ workspaces (default: ~/.growth)")
+    parser.add_argument("--root", help="Workspace root to scan (default: ~/.growth; includes vault and legacy layouts)")
     parser.add_argument("--all", action="store_true", help="Diagnose all Xiaohongshu workspaces under --root or ~/.growth")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of text")
     args = parser.parse_args()
