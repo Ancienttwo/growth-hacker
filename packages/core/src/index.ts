@@ -6,6 +6,8 @@ export type RuntimeKind = "hermes" | "openclaw";
 export type RuntimeState = "available" | "missing" | "degraded";
 export type PlatformId = typeof XIAOHONGSHU_PLATFORM | "youtube" | "facebook" | "x" | "instagram";
 
+export const WORKSPACE_PLATFORMS: PlatformId[] = [XIAOHONGSHU_PLATFORM, "x", "facebook"];
+
 export interface RuntimeStatus {
   kind: RuntimeKind;
   state: RuntimeState;
@@ -88,6 +90,8 @@ export interface MigrationPlan {
 export interface XhsAuthStatus {
   installed: boolean;
   authenticated: boolean;
+  scope?: "global";
+  state?: "signed-in" | "guest" | "missing" | "invalid" | "unavailable";
   guest?: boolean;
   nickname?: string;
   redId?: string;
@@ -107,9 +111,11 @@ export interface JobSnapshot {
 }
 
 export type AgentRunnerKind = RuntimeKind | "local";
-export type SocialCronTaskType = "workspace-diagnosis" | "daily-ops-refresh" | "health-report";
+export type SocialCronTaskType = "workspace-diagnosis" | "daily-ops-refresh" | "health-report" | "auto-reply";
 export type SocialBoardTaskStatus = "todo" | "ready" | "running" | "blocked" | "done" | "failed" | "archived";
 export type XhsPublishedPostStatus = "published" | "monitoring" | "needs-review" | "archived";
+export type XhsAutoReplyItemStatus = "pending" | "drafted" | "sent" | "skipped" | "needs-review" | "failed" | "already-replied";
+export type XhsAutoReplyLocale = "zh-CN" | "zh-HK" | "zh-TW" | "en" | "zh-SG-MY";
 
 export interface XhsPublishedPostStats {
   views?: number;
@@ -140,9 +146,91 @@ export interface XhsPublishedPost {
   stats: XhsPublishedPostStats;
 }
 
+export interface XhsAutoReplySettings {
+  stylePrompt: string;
+  locale: XhsAutoReplyLocale;
+  dryRun: boolean;
+  maxRepliesPerRun: number;
+  delaySeconds: number;
+  updatedAt?: string;
+}
+
+export interface XhsAutoReplyItem {
+  id: string;
+  platform: typeof XIAOHONGSHU_PLATFORM;
+  profile: string;
+  noteId: string;
+  noteUrl?: string;
+  noteTitle?: string;
+  commentId: string;
+  commentAuthorId?: string;
+  commentAuthorName?: string;
+  commentContent: string;
+  commentCreatedAt?: string;
+  subCommentCount?: number;
+  source: "comments" | "notifications";
+  status: XhsAutoReplyItemStatus;
+  replyContent?: string;
+  decisionReason?: string;
+  error?: string;
+  lastRunId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface XhsAutoReplySyncResult {
+  syncedAt: string;
+  imported: number;
+  updated: number;
+  skipped: number;
+  alreadyReplied: number;
+  items: XhsAutoReplyItem[];
+  errors: string[];
+}
+
+export interface XhsAutoReplyRunResult {
+  runId: string;
+  dryRun: boolean;
+  scanned: number;
+  replied: number;
+  drafted: number;
+  skipped: number;
+  failed: number;
+  needsReview: number;
+  stopped: boolean;
+  items: XhsAutoReplyItem[];
+}
+
 export interface SocialAgent {
   id: string;
   runner: AgentRunnerKind;
+}
+
+export interface HermesLlmSelection {
+  provider: string;
+  model: string;
+}
+
+export interface HermesModelOption {
+  id: string;
+  provider: string;
+  label: string;
+  value: string;
+}
+
+export interface HermesProviderOption {
+  id: string;
+  name: string;
+  current: boolean;
+  source?: string;
+  totalModels: number;
+  models: HermesModelOption[];
+}
+
+export interface HermesModelOptions {
+  providers: HermesProviderOption[];
+  models: HermesModelOption[];
+  current?: HermesLlmSelection;
 }
 
 export interface HermesSkillInfo {
@@ -159,6 +247,7 @@ export interface SocialBoardTask {
   boardId: "social-media";
   agentId: string;
   runner: AgentRunnerKind;
+  llm?: HermesLlmSelection;
   platform: string;
   profile: string;
   taskType: SocialCronTaskType;
@@ -182,6 +271,7 @@ export interface SocialTaskCalendarItem {
   startsAt: string;
   agentId: string;
   runner: AgentRunnerKind;
+  llm?: HermesLlmSelection;
   platform: string;
   profile: string;
   taskType: SocialCronTaskType;
@@ -199,6 +289,7 @@ export interface SocialCronSchedule {
 export interface SocialCronJob {
   id: string;
   agentId: string;
+  llm?: HermesLlmSelection;
   platform: string;
   profile: string;
   name: string;

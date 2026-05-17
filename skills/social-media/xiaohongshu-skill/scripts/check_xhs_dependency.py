@@ -34,15 +34,26 @@ READ_ONLY_COMMANDS = [
     "search",
     "read",
     "comments",
+    "sub-comments",
     "user",
     "user-posts",
     "my-notes",
+    "notifications",
+    "unread",
     "topics",
     "hot",
 ]
 
 WRITE_COMMANDS = [
     "post",
+    "delete",
+    "like",
+    "favorite",
+    "comment",
+    "reply",
+    "follow",
+    "unfollow",
+    "delete-comment",
 ]
 
 CORE_COMMANDS = [*READ_ONLY_COMMANDS, *WRITE_COMMANDS]

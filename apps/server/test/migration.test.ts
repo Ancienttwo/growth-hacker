@@ -35,11 +35,11 @@ describe("legacy Xiaohongshu migration", () => {
     const plan = planXiaohongshuLegacyMigration(config);
     expect(plan.copyCount).toBe(2);
     expect(plan.conflictCount).toBe(0);
-    expect(plan.profiles[0].target).toEndWith(".growth/xiaohongshu/astrozi");
+    expect(plan.profiles[0].target).toEndWith(".growth/astrozi/xiaohongshu");
 
     runXiaohongshuLegacyMigration(config);
 
-    expect(readFileSync(join(config.growthRoot, "xiaohongshu", "astrozi", "01-client-brief.md"), "utf8")).toBe("# Brief\n");
+    expect(readFileSync(join(config.growthRoot, "astrozi", "xiaohongshu", "01-client-brief.md"), "utf8")).toBe("# Brief\n");
     expect(readFileSync(join(legacyProfile, "01-client-brief.md"), "utf8")).toBe("# Brief\n");
     expect(listWorkspaces(config)[0]).toMatchObject({ platform: "xiaohongshu", profile: "astrozi", artifactCount: 2 });
     expect(readManifest(config).migrations.at(-1)?.status).toBe("completed");
@@ -49,7 +49,7 @@ describe("legacy Xiaohongshu migration", () => {
   test("reports target conflicts instead of overwriting", () => {
     const config = fixtureConfig();
     const source = join(config.legacyXiaohongshuRoot, "astrozi");
-    const target = join(config.growthRoot, "xiaohongshu", "astrozi");
+    const target = join(config.growthRoot, "astrozi", "xiaohongshu");
     mkdirSync(source, { recursive: true });
     mkdirSync(target, { recursive: true });
     writeFileSync(join(source, "metrics.csv"), "legacy\n");

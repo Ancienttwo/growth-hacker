@@ -4,7 +4,7 @@ Use this reference when a client revises one of the generated artifacts and want
 
 ## Goal
 
-Turn repeated client edits into explicit operating rules inside `~/.growth/xiaohongshu/<profile>/playbook.md`.
+Turn repeated client edits into explicit operating rules inside `~/.growth/<profile>/xiaohongshu/playbook.md`.
 
 ## Supported Edit Sources
 
@@ -24,7 +24,7 @@ It can still run on other markdown files, but the strongest signal comes from ti
 
 ```bash
 python3 scripts/learn_client_edits.py \
-  --client-dir ~/.growth/xiaohongshu/<profile> \
+  --client-dir ~/.growth/<profile>/xiaohongshu \
   --draft <draft-path> \
   --final <final-path>
 ```

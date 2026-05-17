@@ -8,6 +8,7 @@ import type { AppConfig } from "../src/config";
 import { createSocialBoardTask, listSocialBoardTasks } from "../src/socialBoard";
 import { listSocialTaskCalendar } from "../src/socialCalendar";
 import { computeNextSocialCronRun, createSocialCronJob, listSocialCronJobs, parseSocialCronSchedule } from "../src/socialCron";
+import { buildSocialTaskCommand } from "../src/socialTaskCommands";
 
 function config(agents = ["growth-agent"]): AppConfig {
   const root = mkdtempSync(join(tmpdir(), "growth-hacker-social-cron-"));
@@ -26,7 +27,7 @@ function config(agents = ["growth-agent"]): AppConfig {
 }
 
 function createProfile(appConfig: AppConfig, profile = "astrozi") {
-  mkdirSync(join(appConfig.growthRoot, "xiaohongshu", profile), { recursive: true });
+  mkdirSync(join(appConfig.growthRoot, profile, "xiaohongshu"), { recursive: true });
 }
 
 describe("social cron jobs", () => {
@@ -45,6 +46,27 @@ describe("social cron jobs", () => {
     expect(job.platform).toBe("xiaohongshu");
     expect(job.schedule.display).toBe("daily 09:00");
     expect(listSocialCronJobs(appConfig)).toHaveLength(1);
+  });
+
+  test("keeps selected Hermes provider/model on cron and auto-reply task commands", () => {
+    const appConfig = config();
+    createProfile(appConfig);
+    const llm = { provider: "openai-codex", model: "gpt-5.4" };
+
+    const job = createSocialCronJob(appConfig, {
+      platform: "xiaohongshu",
+      profile: "astrozi",
+      taskType: "auto-reply",
+      schedule: "daily 09:00",
+      llm
+    });
+    const command = buildSocialTaskCommand(appConfig, job.platform, job.profile, job.taskType, job.agentId, job.llm);
+
+    expect(job.llm).toEqual(llm);
+    expect(command.args).toContain("--llm-provider");
+    expect(command.args).toContain("openai-codex");
+    expect(command.args).toContain("--llm-model");
+    expect(command.args).toContain("gpt-5.4");
   });
 
   test("rejects cron jobs outside configured agents", () => {

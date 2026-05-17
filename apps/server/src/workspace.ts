@@ -6,8 +6,8 @@ import {
   type ArtifactInfo,
   type GrowthWorkspaceManifest,
   type WorkspaceProfile,
+  WORKSPACE_PLATFORMS,
   WORKSPACE_SCHEMA_VERSION,
-  XIAOHONGSHU_PLATFORM,
   mimeFromPath
 } from "@growth-hacker/core";
 
@@ -15,7 +15,7 @@ import type { AppConfig } from "./config";
 
 const TEXT_LIMIT_BYTES = 1024 * 1024;
 const PREVIEW_MIME_TYPES = new Set<ArtifactInfo["mime"]>(["image", "video"]);
-const INTERNAL_WORKSPACE_DIRS = new Set(["migrations", "published-posts"]);
+const INTERNAL_WORKSPACE_DIRS = new Set(["migrations", "published-posts", "social-board", "social-cron", "vault"]);
 
 export function ensureGrowthRoot(config: AppConfig): void {
   mkdirSync(config.growthRoot, { recursive: true });
@@ -25,7 +25,7 @@ export function ensureGrowthRoot(config: AppConfig): void {
     writeManifest(config, {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       growthRoot: config.growthRoot,
-      knownPlatforms: [XIAOHONGSHU_PLATFORM],
+      knownPlatforms: WORKSPACE_PLATFORMS,
       migrations: []
     });
   }
@@ -34,7 +34,9 @@ export function ensureGrowthRoot(config: AppConfig): void {
 export function readManifest(config: AppConfig): GrowthWorkspaceManifest {
   ensureGrowthRoot(config);
   const path = join(config.growthRoot, "workspace.json");
-  return JSON.parse(readFileSync(path, "utf8")) as GrowthWorkspaceManifest;
+  const manifest = JSON.parse(readFileSync(path, "utf8")) as GrowthWorkspaceManifest;
+  manifest.knownPlatforms = Array.from(new Set([...WORKSPACE_PLATFORMS, ...manifest.knownPlatforms]));
+  return manifest;
 }
 
 export function writeManifest(config: AppConfig, manifest: GrowthWorkspaceManifest): void {
@@ -42,27 +44,25 @@ export function writeManifest(config: AppConfig, manifest: GrowthWorkspaceManife
   writeFileSync(join(config.growthRoot, "workspace.json"), JSON.stringify(manifest, null, 2) + "\n");
 }
 
-export function platformRoot(config: AppConfig, platform: string): string {
-  assertSafeSegment(platform, "platform");
-  return join(config.growthRoot, platform);
-}
-
 export function profileRoot(config: AppConfig, platform: string, profile: string): string {
   assertSafeSegment(profile, "profile");
-  return join(platformRoot(config, platform), profile);
+  assertSafeSegment(platform, "platform");
+  return join(config.growthRoot, profile, platform);
 }
 
 export function listWorkspaces(config: AppConfig): WorkspaceProfile[] {
   ensureGrowthRoot(config);
-  const platforms = safeReaddir(config.growthRoot).filter((entry) => {
+  const knownPlatforms = new Set(readManifest(config).knownPlatforms);
+  const profileDirs = safeReaddir(config.growthRoot).filter((entry) => {
     const path = join(config.growthRoot, entry);
     return safeStat(path)?.isDirectory() && !INTERNAL_WORKSPACE_DIRS.has(entry);
   });
 
   const profiles: WorkspaceProfile[] = [];
-  for (const platform of platforms) {
-    for (const profile of safeReaddir(join(config.growthRoot, platform))) {
-      const path = join(config.growthRoot, platform, profile);
+  for (const profile of profileDirs) {
+    for (const platform of safeReaddir(join(config.growthRoot, profile))) {
+      if (!knownPlatforms.has(platform)) continue;
+      const path = profileRoot(config, platform, profile);
       const stat = safeStat(path);
       if (!stat?.isDirectory()) continue;
       profiles.push({

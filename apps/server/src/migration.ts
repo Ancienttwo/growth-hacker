@@ -9,12 +9,12 @@ import {
 } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
-import { ensureGrowthRoot, platformRoot, readManifest, safeStat, writeManifest } from "./workspace";
+import { ensureGrowthRoot, profileRoot, readManifest, safeStat, writeManifest } from "./workspace";
 
 export function planXiaohongshuLegacyMigration(config: AppConfig): MigrationPlan {
   ensureGrowthRoot(config);
   const sourceRoot = config.legacyXiaohongshuRoot;
-  const targetRoot = platformRoot(config, XIAOHONGSHU_PLATFORM);
+  const targetRoot = config.growthRoot;
   const profiles: MigrationProfilePlan[] = [];
   const sourceStat = safeStat(sourceRoot);
   if (!sourceStat?.isDirectory()) {
@@ -24,7 +24,7 @@ export function planXiaohongshuLegacyMigration(config: AppConfig): MigrationPlan
   for (const profile of readdirSync(sourceRoot).sort()) {
     const source = join(sourceRoot, profile);
     if (!safeStat(source)?.isDirectory()) continue;
-    const target = join(targetRoot, profile);
+    const target = profileRoot(config, XIAOHONGSHU_PLATFORM, profile);
     const files = planProfileFiles(source, target);
     const conflictCount = files.filter((file) => file.action === "conflict").length;
     const copyCount = files.filter((file) => file.action === "copy").length;

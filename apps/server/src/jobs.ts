@@ -1,8 +1,9 @@
 import type { JobSnapshot } from "@growth-hacker/core";
 
-import { runCommand } from "./shell";
+import { redact, runCommand } from "./shell";
 
 type Listener = (job: JobSnapshot) => void;
+type JobLogger = (line: string) => void;
 
 interface JobStartOptions {
   cwd?: string;
@@ -62,6 +63,42 @@ export class JobStore {
       this.emit(id);
       options.onFinish?.(job);
     });
+
+    return job;
+  }
+
+  startTask(type: string, command: string[], task: (log: JobLogger) => Promise<void>): JobSnapshot {
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const job: JobSnapshot = {
+      id,
+      type,
+      status: "running",
+      command,
+      startedAt: new Date().toISOString(),
+      logs: []
+    };
+    this.jobs.set(id, job);
+    this.emit(id);
+
+    const log = (line: string) => {
+      job.logs.push(redact(line));
+      this.emit(id);
+    };
+
+    void task(log)
+      .then(() => {
+        job.exitCode = 0;
+        job.finishedAt = new Date().toISOString();
+        job.status = "succeeded";
+        this.emit(id);
+      })
+      .catch((error: unknown) => {
+        job.exitCode = 1;
+        job.finishedAt = new Date().toISOString();
+        job.status = "failed";
+        job.logs.push(`error: ${redact(error instanceof Error ? error.message : String(error))}`);
+        this.emit(id);
+      });
 
     return job;
   }

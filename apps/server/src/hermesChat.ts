@@ -24,6 +24,7 @@ export interface CreateHermesChatRunInput {
   hermesSessionId?: string;
   instructions?: string;
   model?: string;
+  provider?: string;
   permissionMode?: string;
   reasoningEffort?: string;
 }
@@ -33,6 +34,19 @@ export interface HermesChatRun {
   status: string;
   sessionId: string;
   hermesSessionId: string;
+}
+
+export interface HermesChatRunStatus {
+  runId: string;
+  status: string;
+  sessionId?: string;
+  model?: string;
+  lastEvent?: string;
+  output?: string;
+  error?: unknown;
+  usage?: Record<string, number>;
+  updatedAt?: number;
+  createdAt?: number;
 }
 
 export interface HermesApprovalInput {
@@ -92,12 +106,14 @@ export async function createHermesChatRun(config: AppConfig, input: CreateHermes
   const permissionMode = normalizePermissionMode(input.permissionMode);
   const reasoningEffort = normalizeReasoningEffort(input.reasoningEffort);
   const model = normalizeModel(input.model);
+  const provider = normalizeProvider(input.provider);
 
   const body: Record<string, unknown> = {
     input: normalizedInput,
     session_id: hermesSessionId,
     metadata: {
       agent_id: agentId,
+      provider,
       permission_mode: permissionMode,
       reasoning_effort: reasoningEffort
     }
@@ -105,6 +121,7 @@ export async function createHermesChatRun(config: AppConfig, input: CreateHermes
   const instructions = buildProfileInstructions(config, agentId, input.instructions);
   if (instructions) body.instructions = instructions;
   if (model) body.model = model;
+  if (provider) body.provider = provider;
   if (permissionMode) body.permission_mode = permissionMode;
   if (reasoningEffort) body.reasoning_effort = reasoningEffort;
 
@@ -144,6 +161,27 @@ export async function streamHermesRunEvents(config: AppConfig, runId: string): P
       "Content-Type": response.headers.get("Content-Type") ?? "text/event-stream"
     }
   });
+}
+
+export async function getHermesRun(config: AppConfig, runId: string): Promise<HermesChatRunStatus> {
+  assertRunId(runId);
+  const payload = await hermesJson<Record<string, unknown>>(config, `/v1/runs/${encodeURIComponent(runId)}`, {
+    headers: hermesHeaders(config),
+    timeoutMs: 5000,
+    auth: false
+  });
+  return {
+    runId: stringValue(payload.run_id) || runId,
+    status: stringValue(payload.status) || "unknown",
+    sessionId: stringValue(payload.session_id),
+    model: stringValue(payload.model),
+    lastEvent: stringValue(payload.last_event),
+    output: stringValue(payload.output),
+    error: payload.error,
+    usage: recordValue(payload.usage) as Record<string, number> | undefined,
+    updatedAt: numberValue(payload.updated_at),
+    createdAt: numberValue(payload.created_at)
+  };
 }
 
 export async function approveHermesRun(config: AppConfig, runId: string, input: HermesApprovalInput): Promise<{ ok: true }> {
@@ -225,6 +263,13 @@ function normalizeModel(value: string | undefined): string | undefined {
   return model;
 }
 
+function normalizeProvider(value: string | undefined): string | undefined {
+  const provider = value?.trim();
+  if (!provider) return undefined;
+  if (!/^[a-zA-Z0-9_.:-]{1,80}$/.test(provider)) throw new Error("invalid_provider");
+  return provider;
+}
+
 function assertAllowedAgent(config: AppConfig, agentId: string): void {
   if (!config.socialAgents.some((agent) => agent.id === agentId)) {
     throw new Error(`agent_not_allowed:${agentId}`);
@@ -301,6 +346,18 @@ function hermesHeaders(config: AppConfig, sessionKey?: string): Headers {
 
 function applyHermesAuthHeaders(config: AppConfig, headers: Headers): void {
   if (config.hermesApiKey) headers.set("Authorization", `Bearer ${config.hermesApiKey}`);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 async function hermesErrorMessage(response: Response): Promise<string> {

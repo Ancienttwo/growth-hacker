@@ -1,10 +1,14 @@
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import type { SocialCronTaskType } from "@growth-hacker/core";
+import type { HermesLlmSelection, SocialCronTaskType } from "@growth-hacker/core";
 import { XIAOHONGSHU_PLATFORM } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
 import { profileRoot, safeStat } from "./workspace";
+
+const serverDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(serverDir, "../../..");
 
 export interface SocialTaskCommand {
   command: string;
@@ -16,7 +20,9 @@ export function buildSocialTaskCommand(
   config: AppConfig,
   platform: string,
   profile: string,
-  taskType: SocialCronTaskType
+  taskType: SocialCronTaskType,
+  agentId = config.defaultHermesProfile,
+  llm?: HermesLlmSelection
 ): SocialTaskCommand {
   if (platform !== XIAOHONGSHU_PLATFORM) throw new Error(`platform_not_supported:${platform}`);
   const root = profileRoot(config, platform, profile);
@@ -24,6 +30,14 @@ export function buildSocialTaskCommand(
 
   const python = process.env.PYTHON ?? "python3";
   const scriptRoot = config.bundledXiaohongshuSkillRoot;
+  if (taskType === "auto-reply") {
+    const llmArgs = llm ? ["--llm-provider", llm.provider, "--llm-model", llm.model] : [];
+    return {
+      command: process.execPath,
+      args: [join(serverDir, "xhsAutoReplyRunner.ts"), "--profile", profile, "--agent-id", agentId, ...llmArgs],
+      cwd: repoRoot
+    };
+  }
   if (taskType === "workspace-diagnosis") {
     return {
       command: python,

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { JobSnapshot, SocialBoardTask, SocialBoardTaskStatus, SocialCronTaskType } from "@growth-hacker/core";
+import type { HermesLlmSelection, JobSnapshot, SocialBoardTask, SocialBoardTaskStatus, SocialCronTaskType } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
 import type { JobStore } from "./jobs";
@@ -19,6 +19,7 @@ interface SocialBoardStore {
 
 export interface CreateSocialBoardTaskInput {
   agentId?: string;
+  llm?: HermesLlmSelection;
   platform: string;
   profile: string;
   taskType: SocialCronTaskType;
@@ -50,6 +51,7 @@ export function createSocialBoardTask(config: AppConfig, input: CreateSocialBoar
     boardId: BOARD_ID,
     agentId,
     runner,
+    llm: input.llm,
     platform: input.platform,
     profile: input.profile,
     taskType: input.taskType,
@@ -61,7 +63,7 @@ export function createSocialBoardTask(config: AppConfig, input: CreateSocialBoar
     updatedAt: now
   };
 
-  buildSocialTaskCommand(config, task.platform, task.profile, task.taskType);
+  buildSocialTaskCommand(config, task.platform, task.profile, task.taskType, task.agentId, task.llm);
   const store = readStore(config);
   store.tasks.push(task);
   writeStore(config, store);
@@ -90,7 +92,7 @@ export function runSocialBoardTask(config: AppConfig, jobStore: JobStore, id: st
   if (index < 0) throw new Error(`social_board_task_not_found:${id}`);
   const task = store.tasks[index];
   if (!RUNNABLE_STATUSES.includes(task.status)) throw new Error(`task_not_runnable:${task.status}`);
-  const command = buildSocialTaskCommand(config, task.platform, task.profile, task.taskType);
+  const command = buildSocialTaskCommand(config, task.platform, task.profile, task.taskType, task.agentId, task.llm);
   const now = new Date().toISOString();
   store.tasks[index] = { ...task, status: "running", startedAt: now, error: undefined, updatedAt: now };
   writeStore(config, store);

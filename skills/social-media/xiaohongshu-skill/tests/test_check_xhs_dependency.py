@@ -38,11 +38,43 @@ def make_fake_xhs(commands: set[str]) -> Path:
 
 class CheckXhsDependencyTest(unittest.TestCase):
     def test_research_mode_does_not_require_post_command(self):
-        fake = make_fake_xhs({"status", "whoami", "search", "read", "comments", "user", "user-posts", "my-notes", "topics", "hot"})
+        fake = make_fake_xhs(
+            {
+                "status",
+                "whoami",
+                "search",
+                "read",
+                "comments",
+                "sub-comments",
+                "user",
+                "user-posts",
+                "my-notes",
+                "notifications",
+                "unread",
+                "topics",
+                "hot",
+            }
+        )
         self.assertEqual(check_main(["--xhs-binary", str(fake), "--research"]), EXIT_OK)
 
     def test_default_mode_still_requires_write_post_command(self):
-        fake = make_fake_xhs({"status", "whoami", "search", "read", "comments", "user", "user-posts", "my-notes"})
+        fake = make_fake_xhs(
+            {
+                "status",
+                "whoami",
+                "search",
+                "read",
+                "comments",
+                "sub-comments",
+                "user",
+                "user-posts",
+                "my-notes",
+                "notifications",
+                "unread",
+                "topics",
+                "hot",
+            }
+        )
         self.assertEqual(check_main(["--xhs-binary", str(fake)]), EXIT_COMMAND_MISSING)
 
 

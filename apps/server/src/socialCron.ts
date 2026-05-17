@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { JobSnapshot, SocialCronJob, SocialCronSchedule, SocialCronTaskType } from "@growth-hacker/core";
+import type { HermesLlmSelection, JobSnapshot, SocialCronJob, SocialCronSchedule, SocialCronTaskType } from "@growth-hacker/core";
 import { XIAOHONGSHU_PLATFORM } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
@@ -14,7 +14,8 @@ const SOCIAL_CRON_SCHEMA_VERSION = 1;
 const TASK_LABELS: Record<SocialCronTaskType, string> = {
   "workspace-diagnosis": "Workspace diagnosis",
   "daily-ops-refresh": "Daily ops refresh",
-  "health-report": "Health report"
+  "health-report": "Health report",
+  "auto-reply": "Auto replies"
 };
 
 interface SocialCronStore {
@@ -24,6 +25,7 @@ interface SocialCronStore {
 
 export interface CreateSocialCronJobInput {
   agentId?: string;
+  llm?: HermesLlmSelection;
   platform: string;
   profile: string;
   taskType: SocialCronTaskType;
@@ -33,6 +35,7 @@ export interface CreateSocialCronJobInput {
 
 export interface UpdateSocialCronJobInput {
   enabled?: boolean;
+  llm?: HermesLlmSelection | null;
   schedule?: string;
   name?: string;
 }
@@ -65,6 +68,7 @@ export function createSocialCronJob(config: AppConfig, input: CreateSocialCronJo
   const job: SocialCronJob = {
     id: `scron-${randomUUID().slice(0, 8)}`,
     agentId,
+    llm: input.llm,
     platform: input.platform,
     profile: input.profile,
     name: input.name?.trim() || defaultJobName(input.profile, input.taskType),
@@ -99,6 +103,9 @@ export function updateSocialCronJob(config: AppConfig, id: string, input: Update
     updated.enabled = input.enabled;
     updated.state = input.enabled ? "scheduled" : "paused";
     updated.nextRunAt = input.enabled ? computeNextSocialCronRun(updated.schedule, new Date()) : undefined;
+  }
+  if (input.llm !== undefined) {
+    updated.llm = input.llm ?? undefined;
   }
   if (input.schedule !== undefined) {
     updated.schedule = parseSocialCronSchedule(input.schedule);
@@ -150,6 +157,7 @@ export function runSocialCronJob(config: AppConfig, jobStore: JobStore, id: stri
 
   const task = createSocialBoardTask(config, {
     agentId: job.agentId,
+    llm: job.llm,
     platform: job.platform,
     profile: job.profile,
     taskType: job.taskType,
@@ -290,10 +298,20 @@ function writeStore(config: AppConfig, store: SocialCronStore): void {
 function normalizeJob(job: SocialCronJob): SocialCronJob {
   return {
     ...job,
+    llm: normalizeStoredLlm(job.llm),
     enabled: job.enabled ?? true,
     state: job.state ?? "scheduled",
     runCount: job.runCount ?? 0
   };
+}
+
+function normalizeStoredLlm(value: unknown): HermesLlmSelection | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const provider = (value as Record<string, unknown>).provider;
+  const model = (value as Record<string, unknown>).model;
+  if (typeof provider !== "string" || typeof model !== "string") return undefined;
+  if (!provider.trim() || !model.trim()) return undefined;
+  return { provider: provider.trim(), model: model.trim() };
 }
 
 function ensureStoreDir(config: AppConfig): void {

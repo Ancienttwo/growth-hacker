@@ -24,7 +24,7 @@ function config(): AppConfig {
 }
 
 function createProfile(appConfig: AppConfig, profile = "astrozi"): string {
-  const path = join(appConfig.growthRoot, "xiaohongshu", profile);
+  const path = join(appConfig.growthRoot, profile, "xiaohongshu");
   mkdirSync(path, { recursive: true });
   return path;
 }

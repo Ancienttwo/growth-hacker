@@ -10,7 +10,7 @@
         {
           "name": "workspace_created",
           "type": "file_exists",
-          "description": "应创建 ~/.growth/xiaohongshu/<profile>/ 下的标准文件和 lessons 目录。"
+          "description": "应创建 ~/.growth/<profile>/xiaohongshu/ 下的标准文件和 lessons 目录。"
         },
         {
           "name": "playbook_present",
@@ -92,7 +92,7 @@
         {
           "name": "evidence_written",
           "type": "file_exists",
-          "description": "应创建 ~/.growth/xiaohongshu/<profile>/xhs-evidence/ 下的原始 JSON 证据。"
+          "description": "应创建 ~/.growth/<profile>/xiaohongshu/xhs-evidence/ 下的原始 JSON 证据。"
         },
         {
           "name": "analysis_filled_from_live_data",
@@ -128,7 +128,7 @@
         {
           "name": "write_action_logged",
           "type": "file_exists",
-          "description": "写操作后应追加 ~/.growth/xiaohongshu/<profile>/xhs-action-log.md。"
+          "description": "写操作后应追加 ~/.growth/<profile>/xiaohongshu/xhs-action-log.md。"
         },
         {
           "name": "no_implicit_batch_publish",

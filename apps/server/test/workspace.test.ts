@@ -26,7 +26,7 @@ function config(): AppConfig {
 describe("workspace artifact access", () => {
   test("lists and reads canonical profile artifacts", () => {
     const appConfig = config();
-    const profile = join(appConfig.growthRoot, "xiaohongshu", "astrozi");
+    const profile = join(appConfig.growthRoot, "astrozi", "xiaohongshu");
     mkdirSync(profile, { recursive: true });
     writeFileSync(join(profile, "01-client-brief.md"), "# AstroZi\n");
 
@@ -37,14 +37,14 @@ describe("workspace artifact access", () => {
 
   test("blocks path traversal outside the profile", () => {
     const appConfig = config();
-    const profile = join(appConfig.growthRoot, "xiaohongshu", "astrozi");
+    const profile = join(appConfig.growthRoot, "astrozi", "xiaohongshu");
     mkdirSync(profile, { recursive: true });
     expect(() => readArtifact(appConfig, "xiaohongshu", "astrozi", "../secret.md")).toThrow("Path traversal blocked");
   });
 
   test("marks image and video artifacts as binary previews", () => {
     const appConfig = config();
-    const profile = join(appConfig.growthRoot, "xiaohongshu", "astrozi");
+    const profile = join(appConfig.growthRoot, "astrozi", "xiaohongshu");
     mkdirSync(profile, { recursive: true });
     writeFileSync(join(profile, "cover.png"), "not-a-real-png");
     writeFileSync(join(profile, "clip.mp4"), "not-a-real-mp4");
@@ -60,10 +60,24 @@ describe("workspace artifact access", () => {
 
   test("does not expose internal stores as workspace platforms", () => {
     const appConfig = config();
-    mkdirSync(join(appConfig.growthRoot, "xiaohongshu", "astrozi"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "xiaohongshu"), { recursive: true });
     mkdirSync(join(appConfig.growthRoot, "published-posts", "xiaohongshu"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "vault", "reviews"), { recursive: true });
     writeFileSync(join(appConfig.growthRoot, "published-posts", "xiaohongshu", "astrozi.json"), "{}");
 
     expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/astrozi"]);
+  });
+
+  test("lists profile-first multi-platform workspaces", () => {
+    const appConfig = config();
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "xiaohongshu"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "x"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "astrozi", "facebook"), { recursive: true });
+
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.profile}/${profile.platform}`).sort()).toEqual([
+      "astrozi/facebook",
+      "astrozi/x",
+      "astrozi/xiaohongshu"
+    ]);
   });
 });

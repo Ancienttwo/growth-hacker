@@ -19,20 +19,45 @@ REQUIRED_FILES = [
     "metrics.csv",
 ]
 
+PLATFORM = "xiaohongshu"
+INTERNAL_PROFILE_DIRS = {"migrations", "published-posts", "social-board", "social-cron", "vault"}
+
 
 def default_workspace_root() -> Path:
-    return Path.home() / ".growth" / "xiaohongshu"
+    return Path.home() / ".growth"
 
 
 def resolve_workspace_root(value: str | None) -> Path:
     if not value:
         return default_workspace_root()
     root = Path(value).expanduser().resolve()
-    if root.name == ".growth":
-        return root / "xiaohongshu"
     if root.name == ".xiaohongshu":
         return root / "client"
     return root
+
+
+def profile_from_client_dir(client_dir: Path) -> str:
+    return client_dir.parent.name if client_dir.name == PLATFORM else client_dir.name
+
+
+def discover_workspace_dirs(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    if root.name == PLATFORM and any((root / name).exists() for name in REQUIRED_FILES):
+        return [root]
+    if root.name == PLATFORM and root.parent.name == ".growth":
+        return [path for path in sorted(root.iterdir()) if path.is_dir()]
+    return [
+        path / PLATFORM
+        for path in sorted(root.iterdir())
+        if path.is_dir() and path.name not in INTERNAL_PROFILE_DIRS and (path / PLATFORM).is_dir()
+    ]
+
+
+def normalize_client_dir(path: Path) -> Path:
+    if (path / PLATFORM).is_dir():
+        return path / PLATFORM
+    return path
 
 
 def count_metric_rows(path: Path) -> int:
@@ -53,7 +78,7 @@ def is_incomplete(path: Path) -> bool:
 
 
 def evaluate_client_dir(client_dir: Path) -> dict[str, object]:
-    client_slug = client_dir.parent.name if client_dir.name == ".xiaohongshu" else client_dir.name
+    client_slug = profile_from_client_dir(client_dir)
     missing = []
     incomplete = []
     optional = {
@@ -138,17 +163,14 @@ def print_text_report(result: dict[str, object]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client-dir", help="Path to one client workspace")
-    parser.add_argument("--root", help="Workspace root containing <profile>/ workspaces (default: ~/.growth/xiaohongshu)")
-    parser.add_argument("--all", action="store_true", help="Diagnose all client workspaces under --root or ~/.growth/xiaohongshu")
+    parser.add_argument("--root", help="Workspace root containing <profile>/<platform>/ workspaces (default: ~/.growth)")
+    parser.add_argument("--all", action="store_true", help="Diagnose all Xiaohongshu workspaces under --root or ~/.growth")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of text")
     args = parser.parse_args()
 
     if args.all:
         workspace_root = resolve_workspace_root(args.root)
-        if workspace_root.exists():
-            workspace_dirs = [path for path in sorted(workspace_root.iterdir()) if path.is_dir()]
-        else:
-            workspace_dirs = []
+        workspace_dirs = discover_workspace_dirs(workspace_root)
         results = [evaluate_client_dir(path) for path in workspace_dirs]
         results.sort(key=lambda item: (-int(item["priority_score"]), str(item["client_slug"])))
         if args.json:
@@ -163,7 +185,7 @@ def main() -> int:
     if not args.client_dir:
         raise SystemExit("Provide --client-dir or use --root with --all.")
 
-    result = evaluate_client_dir(Path(args.client_dir).expanduser().resolve())
+    result = evaluate_client_dir(normalize_client_dir(Path(args.client_dir).expanduser().resolve()))
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

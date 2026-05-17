@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AppConfig } from "../src/config";
-import { createHermesChatRun } from "../src/hermesChat";
+import { createHermesChatRun, getHermesRun } from "../src/hermesChat";
 
 function config(): AppConfig {
   const hermesHome = join(tmpdir(), `growth-hacker-hermes-${crypto.randomUUID()}`);
@@ -114,6 +114,37 @@ describe("Hermes chat proxy", () => {
         })
       ).rejects.toThrow("invalid_permission_mode:auto-approve-everything");
       expect(called).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("polls Hermes run status for completed output after event streams close", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl = "";
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      requestUrl = String(input);
+      return Response.json({
+        run_id: "run_abcdef",
+        status: "completed",
+        session_id: "growth-hacker:growth-agent:ui-session",
+        model: "gpt-5.5",
+        output: "![generated](/Users/chris/.hermes/cache/images/generated.png)",
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+        updated_at: 1779006931.198148
+      });
+    }) as typeof fetch;
+
+    try {
+      const status = await getHermesRun(config(), "run_abcdef");
+      expect(requestUrl).toBe("http://127.0.0.1:8642/v1/runs/run_abcdef");
+      expect(status).toMatchObject({
+        runId: "run_abcdef",
+        status: "completed",
+        sessionId: "growth-hacker:growth-agent:ui-session",
+        output: "![generated](/Users/chris/.hermes/cache/images/generated.png)"
+      });
+      expect(status.usage?.total_tokens).toBe(3);
     } finally {
       globalThis.fetch = originalFetch;
     }

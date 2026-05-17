@@ -9,7 +9,7 @@
 Pending metrics. Run:
 
 ```bash
-python3 scripts/score_health.py --metrics ~/.growth/xiaohongshu/{{PROFILE}}/metrics.csv --output ~/.growth/xiaohongshu/{{PROFILE}}/06-health-report.md
+python3 scripts/score_health.py --metrics ~/.growth/{{PROFILE}}/xiaohongshu/metrics.csv --output ~/.growth/{{PROFILE}}/xiaohongshu/06-health-report.md
 ```
 
 ## Notes

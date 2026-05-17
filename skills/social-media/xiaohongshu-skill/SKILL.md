@@ -5,7 +5,7 @@ description: "Execution-grade Xiaohongshu studio workflow for agencies and opera
 
 # Xiaohongshu Skill
 
-Use this skill as a file-backed operating system for studio and agency delivery. Keep all persistent state in `~/.growth/xiaohongshu/<profile>/` and use the bundled scripts to initialize workspaces, generate daily ops, and score account health.
+Use this skill as a file-backed operating system for studio and agency delivery. Keep all persistent state in `~/.growth/<profile>/xiaohongshu/` and use the bundled scripts to initialize workspaces, generate daily ops, and score account health.
 
 ## Hard Dependency
 
@@ -84,7 +84,7 @@ Before any write operation:
 
 1. Run `xhs whoami --json` to confirm the current account.
 2. Execute only the requested single action; do not batch or infer adjacent actions.
-3. Append the command result or structured error to `~/.growth/xiaohongshu/<profile>/xhs-action-log.md`.
+3. Append the command result or structured error to `~/.growth/<profile>/xiaohongshu/xhs-action-log.md`.
 4. For approved note publishing, prefer final artifact files as the source of truth: extract title/body/hashtags from the approved draft, convert the body to Xiaohongshu-native plain text, pass the cover image with `xhs post --title ... --body ... --images ... --json`, and keep the full JSON response in the action log.
 5. Before calling `xhs post`, run a sanitation check on the exact body string that will be sent. It must not contain visible Markdown syntax such as `**bold**`, `## headings`, fenced code blocks, checklist markers, Markdown tables, or link markup. Xiaohongshu does not render Markdown; use short lines, blank lines, emoji section markers, Chinese punctuation, and `——` dividers instead.
 6. After a successful post, run `xhs my-notes --json` to verify the new note appears and to capture `id`, title, initial view/like/collect/comment/share counts, `tab_status`, and `permission_code`. Do not rely on `xhs read <new_id>` alone for immediate post verification; newly posted notes may return an empty read payload even when publishing succeeded.
@@ -107,8 +107,8 @@ python3 scripts/check_xhs_dependency.py --research --auth
 
 ```bash
 python3 scripts/collect_xhs_research.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --output ~/.growth/xiaohongshu/<profile>/02-competitor-analysis.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --output ~/.growth/<profile>/xiaohongshu/02-competitor-analysis.md
 ```
 
   The live collector now defaults to safe merge mode: it appends/refreshes a `## Live Research Evidence` section instead of overwriting existing manual analysis. Use `--overwrite` only when replacing the whole analysis is intentional; a `.bak` is created first. Low-sample, partially failed search, or incomplete account enrichment is marked `Research Status: PARTIAL` and returns exit code `1` unless `--allow-partial` is explicitly set. Treat `PARTIAL` as usable evidence, not a completed research gate. Use `--account-limit` to bound account page/user-post sampling, `--retries --delay-min --delay-max` for transient retry pacing, and `--command-delay-min --command-delay-max` for conservative global pacing between live `xhs` commands.
@@ -118,7 +118,7 @@ python3 scripts/collect_xhs_research.py \
   Run:
 
 ```bash
-python3 scripts/diagnose_workspace.py --client-dir ~/.growth/xiaohongshu/<profile>
+python3 scripts/diagnose_workspace.py --client-dir ~/.growth/<profile>/xiaohongshu
 ```
 
 - `review-studio-queue`
@@ -135,7 +135,7 @@ python3 scripts/diagnose_workspace.py --all
 
 ```bash
 python3 scripts/learn_client_edits.py \
-  --client-dir ~/.growth/xiaohongshu/<profile> \
+  --client-dir ~/.growth/<profile>/xiaohongshu \
   --draft <path-to-previous-artifact> \
   --final <path-to-client-edited-artifact>
 ```
@@ -145,7 +145,7 @@ python3 scripts/learn_client_edits.py \
 All state lives under one client folder in the system user's home directory, never inside the skill package or repository:
 
 ```text
-~/.growth/xiaohongshu/<profile>/
+~/.growth/<profile>/xiaohongshu/
 ├── 01-client-brief.md
 ├── 02-competitor-analysis.md
 ├── 03-account-strategy.md
@@ -172,14 +172,14 @@ Treat an artifact as incomplete if it still contains `TODO`, `{{...}}`, or empty
 ### `launch-new-client`
 
 1. Collect intake using [intake-and-positioning.md](./references/intake-and-positioning.md).
-2. Run `init_client_workspace.py` if `~/.growth/xiaohongshu/<profile>/` does not exist.
+2. Run `init_client_workspace.py` if `~/.growth/<profile>/xiaohongshu/` does not exist.
 3. Fill `01-client-brief.md` before doing research.
 4. Prepare `02-competitor-analysis.md` with:
 
 ```bash
 python3 scripts/prepare_competitor_analysis.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --output ~/.growth/xiaohongshu/<profile>/02-competitor-analysis.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --output ~/.growth/<profile>/xiaohongshu/02-competitor-analysis.md
 ```
 
 Then fill it with `xhs` live research, browser findings, or fallback artifacts using [research-rubric.md](./references/research-rubric.md). If `playbook.md` exists, treat its preferences as research bias, not just downstream copy bias.
@@ -188,8 +188,8 @@ Then fill it with `xhs` live research, browser findings, or fallback artifacts u
 ```bash
 python3 scripts/check_xhs_dependency.py --research --auth
 python3 scripts/collect_xhs_research.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --output ~/.growth/xiaohongshu/<profile>/02-competitor-analysis.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --output ~/.growth/<profile>/xiaohongshu/02-competitor-analysis.md
 ```
 
 If authentication is missing, keep `02-competitor-analysis.md` as a research brief and mark the live evidence gap explicitly.
@@ -197,9 +197,9 @@ If authentication is missing, keep `02-competitor-analysis.md` as a research bri
 
 ```bash
 python3 scripts/generate_account_strategy.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --analysis ~/.growth/xiaohongshu/<profile>/02-competitor-analysis.md \
-  --output ~/.growth/xiaohongshu/<profile>/03-account-strategy.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --analysis ~/.growth/<profile>/xiaohongshu/02-competitor-analysis.md \
+  --output ~/.growth/<profile>/xiaohongshu/03-account-strategy.md
 ```
 
 Use [intake-and-positioning.md](./references/intake-and-positioning.md) to review the generated persona and niche choices before accepting them. If `playbook.md` exists, the strategy must carry those constraints into naming, topic architecture, and content boundaries.
@@ -207,10 +207,10 @@ Use [intake-and-positioning.md](./references/intake-and-positioning.md) to revie
 
 ```bash
 python3 scripts/generate_content_calendar.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --strategy ~/.growth/xiaohongshu/<profile>/03-account-strategy.md \
-  --analysis ~/.growth/xiaohongshu/<profile>/02-competitor-analysis.md \
-  --output ~/.growth/xiaohongshu/<profile>/04-content-calendar.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --strategy ~/.growth/<profile>/xiaohongshu/03-account-strategy.md \
+  --analysis ~/.growth/<profile>/xiaohongshu/02-competitor-analysis.md \
+  --output ~/.growth/<profile>/xiaohongshu/04-content-calendar.md
 ```
 
 Use [content-and-compliance.md](./references/content-and-compliance.md) and [copywriting-style.md](./references/copywriting-style.md) to improve the generated calendar before finalizing it. The generated calendar must incorporate not only `03-account-strategy.md`, but also the keyword map, repeatable patterns, and research summary from `02-competitor-analysis.md`. If `playbook.md` has rules, the script must apply them to title shape, hook style, emoji usage, and posting volume.
@@ -218,9 +218,9 @@ Use [content-and-compliance.md](./references/content-and-compliance.md) and [cop
 
 ```bash
 python3 scripts/build_daily_ops.py \
-  --brief ~/.growth/xiaohongshu/<profile>/01-client-brief.md \
-  --calendar ~/.growth/xiaohongshu/<profile>/04-content-calendar.md \
-  --output ~/.growth/xiaohongshu/<profile>/05-daily-ops.md
+  --brief ~/.growth/<profile>/xiaohongshu/01-client-brief.md \
+  --calendar ~/.growth/<profile>/xiaohongshu/04-content-calendar.md \
+  --output ~/.growth/<profile>/xiaohongshu/05-daily-ops.md
 ```
 
 9. Leave `06-health-report.md` as a pending template until metrics exist.
@@ -244,8 +244,8 @@ python3 scripts/build_daily_ops.py \
 
 ```bash
 python3 scripts/score_health.py \
-  --metrics ~/.growth/xiaohongshu/<profile>/metrics.csv \
-  --output ~/.growth/xiaohongshu/<profile>/06-health-report.md
+  --metrics ~/.growth/<profile>/xiaohongshu/metrics.csv \
+  --output ~/.growth/<profile>/xiaohongshu/06-health-report.md
 ```
 
 5. Use [diagnosis-rubric.md](./references/diagnosis-rubric.md) and [content-and-compliance.md](./references/content-and-compliance.md) to explain the bottleneck and propose the next actions. If `playbook.md` exists, the health report must reflect the client's learned preferences.
@@ -278,9 +278,9 @@ python3 scripts/score_health.py \
 ## Operating Rules
 
 - Prefer file-backed continuity over ad hoc chat summaries.
-- Keep user/customer workspace data out of the skill package, repo, and `dist/openclaw`; workspaces belong under `~/.growth/xiaohongshu/<profile>/` only. When syncing or packaging this skill, preserve/migrate user data there and exclude repo-local workspace folders.
+- Keep user/customer workspace data out of the skill package, repo, and `dist/openclaw`; workspaces belong under `~/.growth/<profile>/xiaohongshu/` only. When syncing or packaging this skill, preserve/migrate user data there and exclude repo-local workspace folders.
 - Prefer concrete artifacts over generic strategy prose.
 - Prefer `xhs` live evidence over browser/manual evidence when authenticated.
 - Prefer capability-aware fallbacks over pretending unavailable tools exist.
-- Never auto-publish, auto-like, auto-comment, auto-follow, or delete content from a calendar or plan; write operations require an explicit user instruction and an action log entry.
+- Never auto-publish, auto-like, auto-comment, auto-follow, or delete content from a calendar or plan; write operations require an explicit user instruction and an action log entry. Dashboard-managed auto-reply must default to draft-only mode and may send `xhs reply` only after the operator explicitly switches that profile to send mode.
 - Keep recommendations consistent with the studio workflow in this skill, not a solo creator workflow.

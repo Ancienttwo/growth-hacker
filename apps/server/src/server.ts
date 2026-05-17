@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 
 import { loadConfig } from "./config";
+import { persistHermesGeneratedImageArtifacts, resolveHermesGeneratedImage } from "./hermesImages";
+import { listHermesModelOptions, resolveHermesLlmSelection } from "./hermesModels";
 import {
   approveHermesRun,
   createHermesChatRun,
+  getHermesRun,
   getHermesChatStatus,
   hermesErrorStatus,
   stopHermesRun,
@@ -48,6 +51,12 @@ import {
   resolveArtifact
 } from "./workspace";
 import { getXhsAuthStatus, startXhsLogin } from "./xhs";
+import {
+  listXhsAutoReplies,
+  syncXhsAutoReplyQueue,
+  updateXhsAutoReplyItem,
+  updateXhsAutoReplySettings
+} from "./xhsAutoReplies";
 import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, updateXhsPublishedPost } from "./xhsPublished";
 
 export function createApp() {
@@ -73,11 +82,48 @@ export function createApp() {
 
   app.get("/api/chat/hermes/status", async (c) => c.json(await getHermesChatStatus(config)));
 
+  app.get("/api/hermes/models", async (c) => {
+    try {
+      return c.json(await listHermesModelOptions(config));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_hermes_models_failed" }, 400);
+    }
+  });
+
+  app.get("/api/chat/hermes/images/:imageName", (c) => {
+    try {
+      const image = resolveHermesGeneratedImage(config, c.req.param("imageName"));
+      return new Response(Bun.file(image.path), { headers: previewHeaders(image.size, image.contentType) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "hermes_image_unavailable";
+      return c.json({ error: message }, message === "hermes_image_not_found" ? 404 : 400);
+    }
+  });
+
   app.post("/api/chat/runs", async (c) => {
     try {
       return c.json(await createHermesChatRun(config, await c.req.json()), 202);
     } catch (error) {
       return chatErrorResponse(error, "create_chat_run_failed");
+    }
+  });
+
+  app.get("/api/chat/runs/:id", async (c) => {
+    try {
+      return c.json(await getHermesRun(config, c.req.param("id")));
+    } catch (error) {
+      return chatErrorResponse(error, "get_chat_run_failed");
+    }
+  });
+
+  app.post("/api/chat/runs/:id/artifacts", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as { platform?: unknown; profile?: unknown };
+      if (typeof body.platform !== "string" || typeof body.profile !== "string") throw new Error("workspace_required");
+      const run = await getHermesRun(config, c.req.param("id"));
+      return c.json({ artifacts: persistHermesGeneratedImageArtifacts(config, body.platform, body.profile, run.output ?? "") });
+    } catch (error) {
+      return chatErrorResponse(error, "persist_chat_artifacts_failed");
     }
   });
 
@@ -131,43 +177,19 @@ export function createApp() {
     return c.json(job, 202);
   });
 
-  app.get("/api/platforms/xiaohongshu/profiles/:profile/artifacts", (c) => {
-    return c.json({ artifacts: listArtifacts(config, "xiaohongshu", c.req.param("profile")) });
+  app.get("/api/platforms/:platform/profiles/:profile/artifacts", (c) => {
+    return c.json({ artifacts: listArtifacts(config, c.req.param("platform"), c.req.param("profile")) });
   });
 
-  app.get("/api/platforms/xiaohongshu/profiles/:profile/artifact", (c) => {
+  app.get("/api/platforms/:platform/profiles/:profile/artifact", (c) => {
     const path = c.req.query("path") ?? "";
-    return c.json(readArtifact(config, "xiaohongshu", c.req.param("profile"), path));
+    return c.json(readArtifact(config, c.req.param("platform"), c.req.param("profile"), path));
   });
 
-  app.get("/api/platforms/xiaohongshu/profiles/:profile/published-posts", (c) => {
-    try {
-      return c.json({ posts: listXhsPublishedPosts(config, c.req.param("profile")) });
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "list_published_posts_failed" }, 400);
-    }
-  });
-
-  app.post("/api/platforms/xiaohongshu/profiles/:profile/published-posts/sync", async (c) => {
-    try {
-      return c.json(await refreshXhsPublishedPostsFromCli(config, c.req.param("profile")), 202);
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "sync_published_posts_failed" }, 400);
-    }
-  });
-
-  app.patch("/api/platforms/xiaohongshu/profiles/:profile/published-posts/:id", async (c) => {
-    try {
-      return c.json({ post: updateXhsPublishedPost(config, c.req.param("profile"), c.req.param("id"), await c.req.json()) });
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "update_published_post_failed" }, 400);
-    }
-  });
-
-  app.get("/api/platforms/xiaohongshu/profiles/:profile/artifact/raw", (c) => {
+  app.get("/api/platforms/:platform/profiles/:profile/artifact/raw", (c) => {
     const path = c.req.query("path") ?? "";
     try {
-      const { info, target } = resolveArtifact(config, "xiaohongshu", c.req.param("profile"), path);
+      const { info, target } = resolveArtifact(config, c.req.param("platform"), c.req.param("profile"), path);
       if (!isPreviewableArtifact(info)) return c.json({ error: "artifact_preview_unavailable" }, 415);
 
       const file = Bun.file(target);
@@ -197,6 +219,81 @@ export function createApp() {
       return new Response(file, { headers });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "artifact_preview_failed" }, 400);
+    }
+  });
+
+  app.get("/api/platforms/xiaohongshu/profiles/:profile/published-posts", (c) => {
+    try {
+      return c.json({ posts: listXhsPublishedPosts(config, c.req.param("profile")) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_published_posts_failed" }, 400);
+    }
+  });
+
+  app.post("/api/platforms/xiaohongshu/profiles/:profile/published-posts/sync", async (c) => {
+    try {
+      return c.json(await refreshXhsPublishedPostsFromCli(config, c.req.param("profile")), 202);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "sync_published_posts_failed" }, 400);
+    }
+  });
+
+  app.patch("/api/platforms/xiaohongshu/profiles/:profile/published-posts/:id", async (c) => {
+    try {
+      return c.json({ post: updateXhsPublishedPost(config, c.req.param("profile"), c.req.param("id"), await c.req.json()) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_published_post_failed" }, 400);
+    }
+  });
+
+  app.get("/api/platforms/xiaohongshu/profiles/:profile/auto-replies", (c) => {
+    try {
+      return c.json(listXhsAutoReplies(config, c.req.param("profile")));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_auto_replies_failed" }, 400);
+    }
+  });
+
+  app.put("/api/platforms/xiaohongshu/profiles/:profile/auto-replies/settings", async (c) => {
+    try {
+      return c.json({ settings: updateXhsAutoReplySettings(config, c.req.param("profile"), await c.req.json()) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_auto_reply_settings_failed" }, 400);
+    }
+  });
+
+  app.post("/api/platforms/xiaohongshu/profiles/:profile/auto-replies/sync", async (c) => {
+    try {
+      return c.json(await syncXhsAutoReplyQueue(config, c.req.param("profile")), 202);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "sync_auto_replies_failed" }, 400);
+    }
+  });
+
+  app.patch("/api/platforms/xiaohongshu/profiles/:profile/auto-replies/items/:id", async (c) => {
+    try {
+      return c.json({ item: updateXhsAutoReplyItem(config, c.req.param("profile"), c.req.param("id"), await c.req.json()) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_auto_reply_item_failed" }, 400);
+    }
+  });
+
+  app.post("/api/platforms/xiaohongshu/profiles/:profile/auto-replies/run", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as { agentId?: unknown; llm?: unknown };
+      const task = createSocialBoardTask(config, {
+        agentId: typeof body.agentId === "string" ? body.agentId : undefined,
+        llm: await resolveHermesLlmSelection(config, body.llm),
+        platform: "xiaohongshu",
+        profile: c.req.param("profile"),
+        taskType: "auto-reply",
+        title: `${c.req.param("profile")} Auto replies`,
+        source: "manual",
+        status: "ready"
+      });
+      return c.json(runSocialBoardTask(config, jobs, task.id), 202);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "run_auto_replies_failed" }, 400);
     }
   });
 
@@ -245,8 +342,19 @@ export function createApp() {
 
   app.post("/api/social-cron/jobs", async (c) => {
     try {
-      const body = await c.req.json();
-      return c.json(createSocialCronJob(config, body), 201);
+      const body = (await c.req.json()) as Record<string, unknown>;
+      return c.json(
+        createSocialCronJob(config, {
+          agentId: typeof body.agentId === "string" ? body.agentId : undefined,
+          llm: await resolveHermesLlmSelection(config, body.llm),
+          platform: requireBodyString(body.platform, "platform"),
+          profile: requireBodyString(body.profile, "profile"),
+          taskType: requireBodyString(body.taskType, "taskType") as never,
+          schedule: requireBodyString(body.schedule, "schedule"),
+          name: typeof body.name === "string" ? body.name : undefined
+        }),
+        201
+      );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "create_social_cron_failed" }, 400);
     }
@@ -254,8 +362,15 @@ export function createApp() {
 
   app.patch("/api/social-cron/jobs/:id", async (c) => {
     try {
-      const body = await c.req.json();
-      return c.json(updateSocialCronJob(config, c.req.param("id"), body));
+      const body = (await c.req.json()) as Record<string, unknown>;
+      const llm =
+        body.llm === null ? null : body.llm === undefined ? undefined : await resolveHermesLlmSelection(config, body.llm);
+      return c.json(
+        updateSocialCronJob(config, c.req.param("id"), {
+          ...body,
+          llm
+        })
+      );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "update_social_cron_failed" }, 400);
     }
@@ -286,8 +401,21 @@ export function createApp() {
 
   app.post("/api/social-board/tasks", async (c) => {
     try {
-      const body = await c.req.json();
-      return c.json(createSocialBoardTask(config, body), 201);
+      const body = (await c.req.json()) as Record<string, unknown>;
+      return c.json(
+        createSocialBoardTask(config, {
+          agentId: typeof body.agentId === "string" ? body.agentId : undefined,
+          llm: await resolveHermesLlmSelection(config, body.llm),
+          platform: requireBodyString(body.platform, "platform"),
+          profile: requireBodyString(body.profile, "profile"),
+          taskType: requireBodyString(body.taskType, "taskType") as never,
+          title: typeof body.title === "string" ? body.title : undefined,
+          source: body.source === "cron" ? "cron" : "manual",
+          sourceId: typeof body.sourceId === "string" ? body.sourceId : undefined,
+          status: typeof body.status === "string" ? (body.status as never) : undefined
+        }),
+        201
+      );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "create_social_board_task_failed" }, 400);
     }
@@ -347,6 +475,11 @@ function chatErrorResponse(error: unknown, fallbackMessage: string): Response {
     { error: error instanceof Error ? error.message : fallbackMessage },
     { status: hermesErrorStatus(error) }
   );
+}
+
+function requireBodyString(value: unknown, field: string): string {
+  if (typeof value === "string" && value.trim()) return value;
+  throw new Error(`${field}_required`);
 }
 
 interface ByteRange {

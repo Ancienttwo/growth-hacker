@@ -6,7 +6,7 @@ This repository packages a Codex skill plus supporting references, templates, ev
 
 ## What It Does
 
-- Initializes a standard client workspace under `~/.growth/xiaohongshu/<profile>/`
+- Initializes a standard client workspace under `~/.growth/<profile>/xiaohongshu/`
 - Uses `xiaohongshu-cli` for live Xiaohongshu search, note reads, comments, and account evidence
 - Generates structured delivery artifacts for launch and daily ops
 - Scores note performance from `metrics.csv` and writes a health report
@@ -19,7 +19,7 @@ This repository packages a Codex skill plus supporting references, templates, ev
 Every client lives in one directory:
 
 ```text
-~/.growth/xiaohongshu/<profile>/
+~/.growth/<profile>/xiaohongshu/
 ├── 01-client-brief.md
 ├── 02-competitor-analysis.md
 ├── 03-account-strategy.md
@@ -77,7 +77,7 @@ python3 scripts/init_client_workspace.py \
 Check what is missing for one client:
 
 ```bash
-python3 scripts/diagnose_workspace.py --client-dir ~/.growth/xiaohongshu/clear-skin-lab
+python3 scripts/diagnose_workspace.py --client-dir ~/.growth/clear-skin-lab/xiaohongshu
 ```
 
 Check the full studio queue:
@@ -90,16 +90,16 @@ Collect live Xiaohongshu research into the competitor analysis:
 
 ```bash
 python3 scripts/collect_xhs_research.py \
-  --brief ~/.growth/xiaohongshu/clear-skin-lab/01-client-brief.md \
-  --output ~/.growth/xiaohongshu/clear-skin-lab/02-competitor-analysis.md
+  --brief ~/.growth/clear-skin-lab/xiaohongshu/01-client-brief.md \
+  --output ~/.growth/clear-skin-lab/xiaohongshu/02-competitor-analysis.md
 ```
 
 Generate or refresh a health report:
 
 ```bash
 python3 scripts/score_health.py \
-  --metrics ~/.growth/xiaohongshu/clear-skin-lab/metrics.csv \
-  --output ~/.growth/xiaohongshu/clear-skin-lab/06-health-report.md
+  --metrics ~/.growth/clear-skin-lab/xiaohongshu/metrics.csv \
+  --output ~/.growth/clear-skin-lab/xiaohongshu/06-health-report.md
 ```
 
 Build the OpenClaw distribution:
@@ -143,7 +143,9 @@ python3 scripts/build_openclaw.py
 
 Read-only commands (`search`, `read`, `comments`, `user`, `user-posts`, `my-notes`, `topics`, `hot`) may run as part of live research after auth preflight.
 
-Write commands (`post`, `delete`, `like`, `favorite`, `comment`, `reply`, `follow`, `unfollow`) require an explicit user request for that specific action. Before a write command, confirm the active account with `xhs whoami --json`; after it runs, append the result or error code to `~/.growth/xiaohongshu/<profile>/xhs-action-log.md`.
+Write commands (`post`, `delete`, `like`, `favorite`, `comment`, `reply`, `follow`, `unfollow`) require an explicit user request for that specific action. Before a write command, confirm the active account with `xhs whoami --json`; after it runs, append the result or error code to `~/.growth/<profile>/xiaohongshu/xhs-action-log.md`.
+
+Dashboard-managed auto-reply must default to draft-only mode. It may send `xhs reply` only when the operator explicitly switches that profile to send mode in the dashboard settings.
 
 ## Repository Layout
 
