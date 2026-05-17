@@ -13,6 +13,7 @@ export interface RunOptions {
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   onLine?: (line: string) => void;
+  redactOutput?: boolean;
 }
 
 export function runCommand(command: string, args: string[] = [], options: RunOptions = {}): Promise<CommandResult> {
@@ -57,7 +58,12 @@ export function runCommand(command: string, args: string[] = [], options: RunOpt
     child.on("close", (exitCode) => {
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve({ command: all, exitCode, stdout: redact(stdout), stderr: redact(stderr) });
+      resolve({
+        command: all,
+        exitCode,
+        stdout: options.redactOutput === false ? stdout : redact(stdout),
+        stderr: options.redactOutput === false ? stderr : redact(stderr)
+      });
     });
   });
 }

@@ -9,6 +9,8 @@ import type { AgentRunnerKind, SocialAgent } from "@growth-hacker/core";
 export interface AppConfig {
   growthRoot: string;
   hermesHome: string;
+  hermesApiBaseUrl: string;
+  hermesApiKey: string;
   defaultHermesProfile: string;
   socialAgents: SocialAgent[];
   socialCronAgents: string[];
@@ -20,6 +22,8 @@ export interface AppConfig {
 interface RawConfig {
   growthRoot?: string;
   hermesHome?: string;
+  hermesApiBaseUrl?: string;
+  hermesApiKey?: string;
   defaultHermesProfile?: string;
   socialAgents?: Array<string | { id: string; runner?: AgentRunnerKind }>;
   socialCronAgents?: string[];
@@ -59,6 +63,8 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
   return {
     growthRoot: expandHome(raw.growthRoot ?? process.env.GROWTH_HACKER_HOME ?? "~/.growth"),
     hermesHome: expandHome(raw.hermesHome ?? "~/.hermes"),
+    hermesApiBaseUrl: normalizeBaseUrl(raw.hermesApiBaseUrl ?? process.env.HERMES_API_BASE_URL ?? "http://127.0.0.1:8642"),
+    hermesApiKey: raw.hermesApiKey ?? process.env.HERMES_API_KEY ?? process.env.API_SERVER_KEY ?? "",
     defaultHermesProfile,
     socialAgents,
     socialCronAgents: socialAgents.map((agent) => agent.id),
@@ -66,6 +72,10 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     legacyXiaohongshuRoot: expandHome(raw.legacyXiaohongshuRoot ?? "~/.xiaohongshu/client"),
     port: Number(process.env.PORT ?? raw.port ?? 8787)
   };
+}
+
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 function normalizeSocialAgents(

@@ -5,13 +5,15 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import type { AppConfig } from "../src/config";
-import { artifactContentType, listArtifacts, readArtifact } from "../src/workspace";
+import { artifactContentType, listArtifacts, listWorkspaces, readArtifact } from "../src/workspace";
 
 function config(): AppConfig {
   const root = mkdtempSync(join(tmpdir(), "growth-hacker-workspace-"));
   return {
     growthRoot: join(root, ".growth"),
     hermesHome: join(root, ".hermes"),
+    hermesApiBaseUrl: "http://127.0.0.1:8642",
+    hermesApiKey: "",
     defaultHermesProfile: "growth-agent",
     socialAgents: [{ id: "growth-agent", runner: "local" }],
     socialCronAgents: ["growth-agent"],
@@ -54,5 +56,14 @@ describe("workspace artifact access", () => {
     expect(readArtifact(appConfig, "xiaohongshu", "astrozi", "clip.mp4").binary).toBe(true);
     expect(artifactContentType("cover.png")).toBe("image/png");
     expect(artifactContentType("clip.mp4")).toBe("video/mp4");
+  });
+
+  test("does not expose internal stores as workspace platforms", () => {
+    const appConfig = config();
+    mkdirSync(join(appConfig.growthRoot, "xiaohongshu", "astrozi"), { recursive: true });
+    mkdirSync(join(appConfig.growthRoot, "published-posts", "xiaohongshu"), { recursive: true });
+    writeFileSync(join(appConfig.growthRoot, "published-posts", "xiaohongshu", "astrozi.json"), "{}");
+
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["xiaohongshu/astrozi"]);
   });
 });

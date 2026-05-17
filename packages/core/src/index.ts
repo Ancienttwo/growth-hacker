@@ -109,10 +109,49 @@ export interface JobSnapshot {
 export type AgentRunnerKind = RuntimeKind | "local";
 export type SocialCronTaskType = "workspace-diagnosis" | "daily-ops-refresh" | "health-report";
 export type SocialBoardTaskStatus = "todo" | "ready" | "running" | "blocked" | "done" | "failed" | "archived";
+export type XhsPublishedPostStatus = "published" | "monitoring" | "needs-review" | "archived";
+
+export interface XhsPublishedPostStats {
+  views?: number;
+  likes?: number;
+  collects?: number;
+  comments?: number;
+  shares?: number;
+}
+
+export interface XhsPublishedPost {
+  id: string;
+  platform: typeof XIAOHONGSHU_PLATFORM;
+  profile: string;
+  title: string;
+  description?: string;
+  authorName?: string;
+  authorAvatarUrl?: string;
+  coverUrl?: string;
+  url?: string;
+  contentType: "image" | "video" | "text" | "unknown";
+  publishedAt?: string;
+  syncedAt?: string;
+  updatedAt: string;
+  keyword?: string;
+  status: XhsPublishedPostStatus;
+  statusNote?: string;
+  source: "xhs-cli" | "metrics" | "manual";
+  stats: XhsPublishedPostStats;
+}
 
 export interface SocialAgent {
   id: string;
   runner: AgentRunnerKind;
+}
+
+export interface HermesSkillInfo {
+  name: string;
+  category: string;
+  description: string;
+  path: string;
+  enabled: boolean;
+  status: "enabled" | "disabled";
 }
 
 export interface SocialBoardTask {

@@ -5,8 +5,17 @@ import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 
 import { loadConfig } from "./config";
+import {
+  approveHermesRun,
+  createHermesChatRun,
+  getHermesChatStatus,
+  hermesErrorStatus,
+  stopHermesRun,
+  streamHermesRunEvents
+} from "./hermesChat";
 import { JobStore } from "./jobs";
 import { planXiaohongshuLegacyMigration, runXiaohongshuLegacyMigration } from "./migration";
+import { listHermesProfileSkills, updateHermesProfileSkill } from "./hermesSkills";
 import { bootstrapGrowthAgent, getHermesStatus, getRuntimeStatuses } from "./runtime";
 import {
   createSocialBoardTask,
@@ -39,6 +48,7 @@ import {
   resolveArtifact
 } from "./workspace";
 import { getXhsAuthStatus, startXhsLogin } from "./xhs";
+import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, updateXhsPublishedPost } from "./xhsPublished";
 
 export function createApp() {
   const config = loadConfig();
@@ -61,6 +71,58 @@ export function createApp() {
 
   app.post("/api/bootstrap/growth-agent", async (c) => c.json(await bootstrapGrowthAgent(config)));
 
+  app.get("/api/chat/hermes/status", async (c) => c.json(await getHermesChatStatus(config)));
+
+  app.post("/api/chat/runs", async (c) => {
+    try {
+      return c.json(await createHermesChatRun(config, await c.req.json()), 202);
+    } catch (error) {
+      return chatErrorResponse(error, "create_chat_run_failed");
+    }
+  });
+
+  app.get("/api/chat/runs/:id/events", async (c) => {
+    try {
+      return await streamHermesRunEvents(config, c.req.param("id"));
+    } catch (error) {
+      return chatErrorResponse(error, "stream_chat_run_failed");
+    }
+  });
+
+  app.post("/api/chat/runs/:id/approval", async (c) => {
+    try {
+      return c.json(await approveHermesRun(config, c.req.param("id"), await c.req.json()));
+    } catch (error) {
+      return chatErrorResponse(error, "approve_chat_run_failed");
+    }
+  });
+
+  app.post("/api/chat/runs/:id/stop", async (c) => {
+    try {
+      return c.json(await stopHermesRun(config, c.req.param("id")));
+    } catch (error) {
+      return chatErrorResponse(error, "stop_chat_run_failed");
+    }
+  });
+
+  app.get("/api/agents/:agentId/skills", (c) => {
+    try {
+      return c.json({ skills: listHermesProfileSkills(config, c.req.param("agentId")) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_agent_skills_failed" }, 400);
+    }
+  });
+
+  app.patch("/api/agents/:agentId/skills/:skillName", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+      if (typeof body.enabled !== "boolean") throw new Error("enabled_boolean_required");
+      return c.json({ skill: updateHermesProfileSkill(config, c.req.param("agentId"), c.req.param("skillName"), body.enabled) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_agent_skill_failed" }, 400);
+    }
+  });
+
   app.get("/api/platforms/xiaohongshu/auth", async (c) => c.json(await getXhsAuthStatus()));
 
   app.post("/api/platforms/xiaohongshu/login", async (c) => {
@@ -76,6 +138,30 @@ export function createApp() {
   app.get("/api/platforms/xiaohongshu/profiles/:profile/artifact", (c) => {
     const path = c.req.query("path") ?? "";
     return c.json(readArtifact(config, "xiaohongshu", c.req.param("profile"), path));
+  });
+
+  app.get("/api/platforms/xiaohongshu/profiles/:profile/published-posts", (c) => {
+    try {
+      return c.json({ posts: listXhsPublishedPosts(config, c.req.param("profile")) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "list_published_posts_failed" }, 400);
+    }
+  });
+
+  app.post("/api/platforms/xiaohongshu/profiles/:profile/published-posts/sync", async (c) => {
+    try {
+      return c.json(await refreshXhsPublishedPostsFromCli(config, c.req.param("profile")), 202);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "sync_published_posts_failed" }, 400);
+    }
+  });
+
+  app.patch("/api/platforms/xiaohongshu/profiles/:profile/published-posts/:id", async (c) => {
+    try {
+      return c.json({ post: updateXhsPublishedPost(config, c.req.param("profile"), c.req.param("id"), await c.req.json()) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_published_post_failed" }, 400);
+    }
   });
 
   app.get("/api/platforms/xiaohongshu/profiles/:profile/artifact/raw", (c) => {
@@ -254,6 +340,13 @@ function previewHeaders(size: number, contentType: string): Record<string, strin
     "Content-Type": contentType,
     "X-Content-Type-Options": "nosniff"
   };
+}
+
+function chatErrorResponse(error: unknown, fallbackMessage: string): Response {
+  return Response.json(
+    { error: error instanceof Error ? error.message : fallbackMessage },
+    { status: hermesErrorStatus(error) }
+  );
 }
 
 interface ByteRange {

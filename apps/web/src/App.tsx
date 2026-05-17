@@ -1,5 +1,7 @@
 import {
   Activity,
+  Archive,
+  Bookmark,
   Bot,
   CalendarClock,
   CheckCircle2,
@@ -7,22 +9,32 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
+  ExternalLink,
+  Eye,
   FileText,
   Folder,
   Gauge,
+  Heart,
   Image as ImageIcon,
   KeyRound,
   LayoutDashboard,
   Loader2,
   MessageSquare,
+  Mic,
   Play,
+  Plus,
   RefreshCcw,
+  Search,
   Send,
+  ShieldCheck,
+  Share2,
+  SlidersHorizontal,
   Square,
   Terminal,
   Trash2,
   UserPlus,
-  Video
+  Video,
+  Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +45,7 @@ import remarkGfm from "remark-gfm";
 import type {
   ArtifactContent,
   ArtifactInfo,
+  HermesSkillInfo,
   JobSnapshot,
   MigrationPlan,
   RuntimeStatus,
@@ -43,6 +56,8 @@ import type {
   SocialCronTaskType,
   SocialTaskCalendarItem,
   WorkspaceProfile,
+  XhsPublishedPost,
+  XhsPublishedPostStatus,
   XhsAuthStatus
 } from "@growth-hacker/core";
 
@@ -82,6 +97,32 @@ interface SocialCalendarResponse {
   items: SocialTaskCalendarItem[];
 }
 
+interface XhsPublishedPostsResponse {
+  posts: XhsPublishedPost[];
+}
+
+interface XhsPublishedPostsSyncResponse {
+  source: "xhs-cli";
+  syncedAt: string;
+  imported: number;
+  updated: number;
+  archived: number;
+  skipped: number;
+  posts: XhsPublishedPost[];
+}
+
+interface XhsPublishedPostUpdateResponse {
+  post: XhsPublishedPost;
+}
+
+interface HermesSkillsResponse {
+  skills: HermesSkillInfo[];
+}
+
+interface HermesSkillUpdateResponse {
+  skill: HermesSkillInfo;
+}
+
 interface HermesChatStatus {
   available: boolean;
   baseUrl: string;
@@ -105,6 +146,19 @@ interface HermesChatRunResponse {
   hermesSessionId: string;
 }
 
+interface HermesChatRunOptions {
+  agentId: string;
+  instructions?: string;
+  model: string;
+  permissionMode: ChatPermissionMode;
+  reasoningEffort: ChatReasoningEffort;
+}
+
+interface HermesChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface HermesChatEvent {
   event: string;
   run_id?: string;
@@ -122,6 +176,33 @@ interface HermesChatEvent {
   message?: string;
 }
 
+type ChatPermissionMode = "full_access" | "ask" | "read_only";
+type ChatReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+interface ChatAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  content: string;
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  agentId?: string;
+  events: HermesChatEvent[];
+}
+
+interface ChatSessionState {
+  sessions: ChatSession[];
+  activeId: string;
+}
+
+type ChatEventsUpdate = HermesChatEvent[] | ((current: HermesChatEvent[]) => HermesChatEvent[]);
+
 const platformLabel: Record<string, string> = {
   xiaohongshu: "Xiaohongshu",
   youtube: "YouTube",
@@ -136,26 +217,51 @@ const socialCronTaskLabel: Record<SocialCronTaskType, string> = {
   "health-report": "Health"
 };
 
+const publishedPostStatusLabel: Record<XhsPublishedPostStatus, string> = {
+  published: "已发布",
+  monitoring: "监测中",
+  "needs-review": "需复盘",
+  archived: "已归档"
+};
+
+const publishedPostStatusOptions: Array<XhsPublishedPostStatus | "all"> = ["all", "published", "monitoring", "needs-review", "archived"];
 const defaultSocialCronTaskTypes: SocialCronTaskType[] = ["workspace-diagnosis", "daily-ops-refresh", "health-report"];
 const boardStatuses: SocialBoardTaskStatus[] = ["todo", "ready", "running", "blocked", "done", "failed", "archived"];
+const chatPermissionLabels: Record<ChatPermissionMode, string> = {
+  full_access: "完全访问权限",
+  ask: "询问权限",
+  read_only: "只读模式"
+};
+const chatReasoningLabels: Record<ChatReasoningEffort, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "超高"
+};
+const chatModelOptions = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark"];
+const chatAttachmentMaxChars = 120000;
+const chatDefaultSessionTitle = "New session";
+const chatSessionLimit = 24;
+const chatSessionsStorageKey = "growth-hacker.chatSessions";
+const activeChatSessionStorageKey = "growth-hacker.activeChatSessionId";
 
-type DashboardView = "workspace" | "calendar" | "board" | "cron" | "chat" | "jobs" | "setup";
+type DashboardView = "workspace" | "published" | "calendar" | "board" | "cron" | "chat" | "skills" | "jobs" | "setup";
 
 const dashboardNav: Array<{ id: DashboardView; label: string; icon: LucideIcon }> = [
   { id: "workspace", label: "Workspace", icon: LayoutDashboard },
+  { id: "published", label: "Published Posts", icon: ImageIcon },
   { id: "calendar", label: "Task Calendar", icon: CalendarClock },
   { id: "board", label: "Social Board", icon: Bot },
   { id: "cron", label: "Social Cron", icon: RefreshCcw },
   { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "skills", label: "Skills", icon: Gauge },
   { id: "jobs", label: "Job Log", icon: Terminal },
   { id: "setup", label: "Setup", icon: KeyRound }
 ];
 
-const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-const hermesApiBaseUrl = normalizeBaseUrl(
-  viteEnv.VITE_HERMES_API_BASE_URL ?? localStorage.getItem("growth-hacker.hermesApiBaseUrl") ?? "http://127.0.0.1:8642"
-);
-const hermesApiKey = viteEnv.VITE_HERMES_API_KEY ?? localStorage.getItem("growth-hacker.hermesApiKey") ?? "";
+const defaultChatModel = localStorage.getItem("growth-hacker.chatModel") ?? "gpt-5.5";
+const defaultChatReasoningEffort = normalizeChatReasoningEffort(localStorage.getItem("growth-hacker.chatReasoningEffort") ?? "xhigh");
+const defaultChatPermissionMode = normalizeChatPermissionMode(localStorage.getItem("growth-hacker.chatPermissionMode") ?? "ask");
 
 export function App() {
   const [profiles, setProfiles] = useState<WorkspaceProfile[]>([]);
@@ -171,10 +277,19 @@ export function App() {
   const [socialAgents, setSocialAgents] = useState<SocialAgent[]>([]);
   const [socialBoardTasks, setSocialBoardTasks] = useState<SocialBoardTask[]>([]);
   const [socialCalendarItems, setSocialCalendarItems] = useState<SocialTaskCalendarItem[]>([]);
+  const [publishedPosts, setPublishedPosts] = useState<XhsPublishedPost[]>([]);
+  const [publishedSearch, setPublishedSearch] = useState("");
+  const [publishedStatusFilter, setPublishedStatusFilter] = useState<XhsPublishedPostStatus | "all">("all");
+  const [publishedSyncNotice, setPublishedSyncNotice] = useState<string | null>(null);
   const [hermesChatStatus, setHermesChatStatus] = useState<HermesChatStatus | null>(null);
-  const [chatEvents, setChatEvents] = useState<HermesChatEvent[]>([]);
+  const [hermesSkills, setHermesSkills] = useState<HermesSkillInfo[]>([]);
+  const [chatSessionState, setChatSessionState] = useState<ChatSessionState>(() => loadChatSessionState());
   const [activeChatRunId, setActiveChatRunId] = useState<string | null>(null);
-  const [chatSessionId, setChatSessionId] = useState(() => `chat-${Date.now().toString(36)}`);
+  const [chatPermissionMode, setChatPermissionMode] = useState<ChatPermissionMode>(defaultChatPermissionMode);
+  const [chatModel, setChatModel] = useState(defaultChatModel);
+  const [chatReasoningEffort, setChatReasoningEffort] = useState<ChatReasoningEffort>(defaultChatReasoningEffort);
+  const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
+  const [chatComposerNotice, setChatComposerNotice] = useState<string | null>(null);
   const [socialCronTaskTypes, setSocialCronTaskTypes] = useState<SocialCronTaskType[]>(defaultSocialCronTaskTypes);
   const [socialCronTaskType, setSocialCronTaskType] = useState<SocialCronTaskType>("workspace-diagnosis");
   const [socialCronSchedule, setSocialCronSchedule] = useState("daily 09:00");
@@ -182,6 +297,7 @@ export function App() {
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set());
   const [activeView, setActiveView] = useState<DashboardView>("workspace");
   const [chatDraft, setChatDraft] = useState("");
+  const [skillSearch, setSkillSearch] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
 
@@ -237,6 +353,7 @@ export function App() {
   useEffect(() => {
     if (!selectedProfile) return;
     setExpandedDirectories(new Set());
+    setPublishedSyncNotice(null);
     void api<{ artifacts: ArtifactInfo[] }>(
       `/api/platforms/xiaohongshu/profiles/${encodeURIComponent(selectedProfile.profile)}/artifacts`
     ).then((payload) => {
@@ -247,15 +364,50 @@ export function App() {
         payload.artifacts.find((item) => item.kind === "file");
       if (first) void openArtifact(first);
     });
+    if (selectedProfile.platform === "xiaohongshu") {
+      void reloadPublishedPosts(selectedProfile.profile);
+    } else {
+      setPublishedPosts([]);
+    }
   }, [selectedProfile?.profile]);
+
+  useEffect(() => {
+    localStorage.setItem("growth-hacker.chatPermissionMode", chatPermissionMode);
+  }, [chatPermissionMode]);
+
+  useEffect(() => {
+    localStorage.setItem("growth-hacker.chatModel", chatModel);
+  }, [chatModel]);
+
+  useEffect(() => {
+    localStorage.setItem("growth-hacker.chatReasoningEffort", chatReasoningEffort);
+  }, [chatReasoningEffort]);
+
+  useEffect(() => {
+    localStorage.setItem(chatSessionsStorageKey, JSON.stringify(chatSessionState.sessions));
+    localStorage.setItem(activeChatSessionStorageKey, chatSessionState.activeId);
+  }, [chatSessionState]);
 
   const hermes = runtimes.find((runtime) => runtime.kind === "hermes");
   const openclaw = runtimes.find((runtime) => runtime.kind === "openclaw");
   const profileGroups = useMemo(() => groupByPlatform(profiles), [profiles]);
   const artifactTree = useMemo(() => buildArtifactTree(artifacts), [artifacts]);
   const visibleArtifacts = useMemo(() => flattenArtifactTree(artifactTree, expandedDirectories), [artifactTree, expandedDirectories]);
-  const selectedSocialAgent = socialAgents.find((agent) => agent.id === socialCronAgentId) ?? socialAgents[0];
+  const activeChatSession = chatSessionState.sessions.find((session) => session.id === chatSessionState.activeId) ?? chatSessionState.sessions[0];
+  const chatEvents = activeChatSession?.events ?? [];
+  const selectedChatAgentId = activeView === "chat" ? activeChatSession?.agentId : undefined;
+  const selectedSocialAgent =
+    socialAgents.find((agent) => agent.id === selectedChatAgentId) ??
+    socialAgents.find((agent) => agent.id === socialCronAgentId) ??
+    socialAgents[0];
   const activeNavItem = dashboardNav.find((item) => item.id === activeView) ?? dashboardNav[0];
+  useEffect(() => {
+    if (!selectedSocialAgent) {
+      setHermesSkills([]);
+      return;
+    }
+    void reloadHermesSkills(selectedSocialAgent.id);
+  }, [selectedSocialAgent?.id]);
 
   function toggleDirectory(path: string) {
     setExpandedDirectories((current) => {
@@ -342,6 +494,89 @@ export function App() {
     return cronPayload;
   }
 
+  async function reloadPublishedPosts(profile = selectedProfile?.profile): Promise<XhsPublishedPost[]> {
+    if (!profile) {
+      setPublishedPosts([]);
+      return [];
+    }
+    const payload = await api<XhsPublishedPostsResponse>(
+      `/api/platforms/xiaohongshu/profiles/${encodeURIComponent(profile)}/published-posts`
+    ).catch(() => ({ posts: [] }));
+    setPublishedPosts(payload.posts);
+    return payload.posts;
+  }
+
+  async function syncPublishedPosts() {
+    if (!selectedProfile) return;
+    setBusy("published-sync");
+    setPublishedSyncNotice(null);
+    try {
+      const payload = await api<XhsPublishedPostsSyncResponse>(
+        `/api/platforms/xiaohongshu/profiles/${encodeURIComponent(selectedProfile.profile)}/published-posts/sync`,
+        { method: "POST" }
+      );
+      setPublishedPosts(payload.posts);
+      setPublishedSyncNotice(`同步完成：新增 ${payload.imported}，更新 ${payload.updated}，归档 ${payload.archived}`);
+    } catch (error) {
+      setPublishedSyncNotice(error instanceof Error ? error.message : "同步失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updatePublishedPost(post: XhsPublishedPost, patch: { status?: XhsPublishedPostStatus; statusNote?: string; keyword?: string }) {
+    if (!selectedProfile) return;
+    setBusy(`published-update-${post.id}`);
+    try {
+      const payload = await api<XhsPublishedPostUpdateResponse>(
+        `/api/platforms/xiaohongshu/profiles/${encodeURIComponent(selectedProfile.profile)}/published-posts/${encodeURIComponent(post.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch)
+        }
+      );
+      setPublishedPosts((current) => current.map((item) => (item.id === payload.post.id ? payload.post : item)));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reloadHermesSkills(agentId = selectedSocialAgent?.id): Promise<HermesSkillInfo[]> {
+    if (!agentId) {
+      setHermesSkills([]);
+      return [];
+    }
+    const payload = await api<HermesSkillsResponse>(`/api/agents/${encodeURIComponent(agentId)}/skills`).catch(() => ({ skills: [] }));
+    setHermesSkills(payload.skills);
+    return payload.skills;
+  }
+
+  async function toggleHermesSkill(skill: HermesSkillInfo) {
+    const agentId = selectedSocialAgent?.id;
+    if (!agentId) return;
+    setBusy(`skill-${skill.name}`);
+    try {
+      const payload = await api<HermesSkillUpdateResponse>(
+        `/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skill.name)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !skill.enabled })
+        }
+      );
+      setHermesSkills((current) =>
+        current
+          .map((item) =>
+            item.name === payload.skill.name ? { ...item, enabled: payload.skill.enabled, status: payload.skill.status } : item
+          )
+          .sort(sortHermesSkills)
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function createSocialCron() {
     if (!selectedProfile) return;
     setBusy("social-cron-create");
@@ -426,27 +661,179 @@ export function App() {
     source.onerror = () => source.close();
   }
 
+  async function attachChatFiles(files: FileList | null) {
+    const candidates = Array.from(files ?? []);
+    if (!candidates.length) return;
+    const accepted = candidates.filter(isSupportedChatAttachment);
+    const rejected = candidates.filter((file) => !isSupportedChatAttachment(file));
+    if (rejected.length) {
+      setChatComposerNotice(`已忽略 ${rejected.length} 个非文本附件`);
+    } else {
+      setChatComposerNotice(null);
+    }
+    const nextAttachments = await Promise.all(
+      accepted.map(async (file) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        name: file.name,
+        mime: file.type || "text/plain",
+        size: file.size,
+        content: truncateAttachmentContent(await file.text())
+      }))
+    );
+    setChatAttachments((current) => [...current, ...nextAttachments]);
+  }
+
+  function removeChatAttachment(id: string) {
+    setChatAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function updateChatSessionEvents(sessionId: string, update: ChatEventsUpdate, titleHint?: string) {
+    setChatSessionState((current) => {
+      let touched = false;
+      const now = Date.now();
+      const sessions = current.sessions.map((session) => {
+        if (session.id !== sessionId) return session;
+        touched = true;
+        const events = typeof update === "function" ? update(session.events) : update;
+        const shouldNameSession = titleHint && (!session.title.trim() || session.title === chatDefaultSessionTitle);
+        return {
+          ...session,
+          events,
+          title: shouldNameSession ? titleHint : session.title,
+          updatedAt: now
+        };
+      });
+      if (!touched) return current;
+      return { ...current, sessions: sortChatSessions(sessions).slice(0, chatSessionLimit) };
+    });
+  }
+
+  function createChatSessionFromUi() {
+    chatAbortRef.current?.abort();
+    const next = createChatSession(selectedSocialAgent?.id ?? socialCronAgentId);
+    setChatSessionState((current) => ({
+      activeId: next.id,
+      sessions: [next, ...current.sessions].slice(0, chatSessionLimit)
+    }));
+    setActiveChatRunId(null);
+    setChatDraft("");
+    setChatAttachments([]);
+    setChatComposerNotice(null);
+  }
+
+  function selectChatSession(sessionId: string) {
+    if (activeChatRunId) return;
+    const next = chatSessionState.sessions.find((session) => session.id === sessionId);
+    if (!next) return;
+    setChatSessionState((current) => ({ ...current, activeId: sessionId }));
+    if (next.agentId) setSocialCronAgentId(next.agentId);
+    setChatDraft("");
+    setChatAttachments([]);
+    setChatComposerNotice(null);
+  }
+
+  function renameChatSession(sessionId: string, title: string) {
+    setChatSessionState((current) => ({
+      ...current,
+      sessions: current.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              title: title.slice(0, 80),
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }));
+  }
+
+  function deleteChatSession(sessionId: string) {
+    if (activeChatRunId) return;
+    const deletingActive = chatSessionState.activeId === sessionId;
+    setChatSessionState((current) => {
+      const remaining = current.sessions.filter((session) => session.id !== sessionId);
+      const sessions = remaining.length ? remaining : [createChatSession(selectedSocialAgent?.id ?? socialCronAgentId)];
+      return {
+        activeId: deletingActive ? sessions[0].id : current.activeId,
+        sessions
+      };
+    });
+    if (deletingActive) {
+      setChatDraft("");
+      setChatAttachments([]);
+      setChatComposerNotice(null);
+    }
+  }
+
+  function updateChatSessionAgent(agentId: string) {
+    setSocialCronAgentId(agentId);
+    if (!activeChatSession) return;
+    setChatSessionState((current) => ({
+      ...current,
+      sessions: current.sessions.map((session) =>
+        session.id === activeChatSession.id
+          ? {
+              ...session,
+              agentId,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }));
+  }
+
   async function sendChatMessage() {
     const message = chatDraft.trim();
-    if (!message || activeChatRunId) return;
+    if ((!message && !chatAttachments.length) || activeChatRunId || !activeChatSession) return;
     const agentId = selectedSocialAgent?.id ?? socialCronAgentId;
-    const clientSessionId = chatSessionId;
-    const hermesSessionId = `growth-hacker:${normalizeSessionPart(agentId)}:${normalizeSessionPart(clientSessionId)}`;
+    const skillMentions = resolveSkillMentions(message, hermesSkills);
+    if (skillMentions.error) {
+      updateChatSessionEvents(activeChatSession.id, (current) => [
+        ...current,
+        { event: "run.failed", error: skillMentions.error, timestamp: Date.now() / 1000 }
+      ]);
+      return;
+    }
+    const runPermissionMode = chatPermissionMode;
+    const outgoingMessage = buildChatMessageWithAttachments(message, chatAttachments);
+    const clientSessionId = activeChatSession.id;
+    const priorChatEvents = activeChatSession.events;
+    const visibleUserMessage = message || summarizeAttachments(chatAttachments);
     setChatDraft("");
-    setChatEvents((current) => [
-      ...current,
-      { event: "message.user", message, timestamp: Date.now() / 1000 }
-    ]);
+    setChatAttachments([]);
+    setChatComposerNotice(null);
+    updateChatSessionEvents(
+      clientSessionId,
+      (current) => [
+        ...current,
+        { event: "message.user", message: visibleUserMessage, timestamp: Date.now() / 1000 }
+      ],
+      deriveChatSessionTitle(visibleUserMessage)
+    );
     setBusy("chat-run");
     let runId: string | null = null;
     try {
-      const run = await createHermesChatRun(message, clientSessionId, hermesSessionId);
+      const run = await createHermesChatRun(
+        buildHermesChatInput(priorChatEvents, outgoingMessage),
+        clientSessionId,
+        {
+          agentId,
+          instructions: buildSkillInstructions(skillMentions.skills),
+          model: chatModel,
+          permissionMode: runPermissionMode,
+          reasoningEffort: chatReasoningEffort
+        }
+      );
       runId = run.runId;
       setActiveChatRunId(run.runId);
       const controller = new AbortController();
       chatAbortRef.current = controller;
       await consumeHermesRunEvents(run.runId, controller.signal, (next) => {
-        setChatEvents((current) => [...current, next]);
+        updateChatSessionEvents(clientSessionId, (current) => [...current, next]);
+        if (next.event === "approval.request" && next.run_id) {
+          if (runPermissionMode === "full_access") void approveHermesRun(next.run_id, "session");
+          if (runPermissionMode === "read_only") void approveHermesRun(next.run_id, "deny");
+        }
         if (["run.completed", "run.failed", "run.cancelled"].includes(next.event)) {
           setActiveChatRunId(null);
           setBusy(null);
@@ -455,7 +842,7 @@ export function App() {
       });
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
-        setChatEvents((current) => [
+        updateChatSessionEvents(clientSessionId, (current) => [
           ...current,
           { event: "run.failed", error: error instanceof Error ? error.message : "chat_run_failed", timestamp: Date.now() / 1000 }
         ]);
@@ -479,7 +866,8 @@ export function App() {
 
   async function approveChatRun(runId: string, choice: string) {
     await approveHermesRun(runId, choice).catch((error) => {
-      setChatEvents((current) => [
+      if (!activeChatSession) return;
+      updateChatSessionEvents(activeChatSession.id, (current) => [
         ...current,
         { event: "approval.error", error: error instanceof Error ? error.message : "approval_failed", timestamp: Date.now() / 1000 }
       ]);
@@ -487,11 +875,7 @@ export function App() {
   }
 
   function resetChat() {
-    chatAbortRef.current?.abort();
-    setChatEvents([]);
-    setActiveChatRunId(null);
-    setChatDraft("");
-    setChatSessionId(`chat-${Date.now().toString(36)}`);
+    createChatSessionFromUi();
   }
 
   return (
@@ -559,6 +943,17 @@ export function App() {
                 selectedProfile={selectedProfile}
               />
             ) : null}
+            {activeView === "published" ? (
+              <PublishedPostsSubNav
+                onSelectProfile={(profile) => {
+                  setSelectedProfile(profile);
+                  setActiveView("published");
+                }}
+                posts={publishedPosts}
+                profileGroups={profileGroups}
+                selectedProfile={selectedProfile}
+              />
+            ) : null}
             {activeView === "calendar" ? <CalendarSubNav agents={socialAgents} items={socialCalendarItems} /> : null}
             {activeView === "board" ? <BoardSubNav agents={socialAgents} tasks={socialBoardTasks} /> : null}
             {activeView === "cron" ? (
@@ -578,7 +973,26 @@ export function App() {
               />
             ) : null}
             {activeView === "chat" ? (
-              <ChatSubNav agents={socialAgents} onNewChat={resetChat} selectedAgent={selectedSocialAgent} status={hermesChatStatus} />
+              <ChatSubNav
+                activeRunId={activeChatRunId}
+                activeSession={activeChatSession}
+                agents={socialAgents}
+                onDeleteSession={deleteChatSession}
+                onNewChat={resetChat}
+                onRenameSession={renameChatSession}
+                onSelectAgent={updateChatSessionAgent}
+                onSelectSession={selectChatSession}
+                selectedAgent={selectedSocialAgent}
+                sessions={chatSessionState.sessions}
+              />
+            ) : null}
+            {activeView === "skills" ? (
+              <SkillsSubNav
+                agents={socialAgents}
+                onSelectAgent={setSocialCronAgentId}
+                selectedAgent={selectedSocialAgent}
+                skills={hermesSkills}
+              />
             ) : null}
             {activeView === "jobs" ? <JobsSubNav job={selectedJob} /> : null}
             {activeView === "setup" ? <SetupSubNav auth={auth} hermes={hermes} openclaw={openclaw} /> : null}
@@ -606,6 +1020,21 @@ export function App() {
                 <WorkspaceView selectedArtifact={selectedArtifact} selectedProfile={selectedProfile} />
               ) : null}
 
+              {activeView === "published" ? (
+                <PublishedPostsView
+                  busy={busy}
+                  notice={publishedSyncNotice}
+                  onSearchChange={setPublishedSearch}
+                  onStatusFilterChange={setPublishedStatusFilter}
+                  onSync={() => void syncPublishedPosts()}
+                  onUpdate={(post, patch) => void updatePublishedPost(post, patch)}
+                  posts={publishedPosts}
+                  search={publishedSearch}
+                  selectedProfile={selectedProfile}
+                  statusFilter={publishedStatusFilter}
+                />
+              ) : null}
+
               {activeView === "calendar" ? <CalendarView items={socialCalendarItems} /> : null}
 
               {activeView === "board" ? (
@@ -625,14 +1054,37 @@ export function App() {
               {activeView === "chat" ? (
                 <ChatView
                   activeRunId={activeChatRunId}
+                  attachments={chatAttachments}
+                  composerNotice={chatComposerNotice}
                   draft={chatDraft}
                   events={chatEvents}
+                  model={chatModel}
+                  onAttachFiles={(files) => void attachChatFiles(files)}
                   onApprove={(runId, choice) => void approveChatRun(runId, choice)}
                   onDraftChange={setChatDraft}
+                  onModelChange={setChatModel}
+                  onPermissionModeChange={setChatPermissionMode}
+                  onReasoningEffortChange={setChatReasoningEffort}
+                  onRemoveAttachment={removeChatAttachment}
                   onSend={() => void sendChatMessage()}
                   onStop={() => void stopChatRun()}
+                  permissionMode={chatPermissionMode}
+                  reasoningEffort={chatReasoningEffort}
                   selectedAgent={selectedSocialAgent}
+                  skills={hermesSkills}
                   status={hermesChatStatus}
+                />
+              ) : null}
+
+              {activeView === "skills" ? (
+                <SkillsView
+                  agent={selectedSocialAgent}
+                  busy={busy}
+                  onRefresh={() => void reloadHermesSkills()}
+                  onSearchChange={setSkillSearch}
+                  onToggle={(skill) => void toggleHermesSkill(skill)}
+                  search={skillSearch}
+                  skills={hermesSkills}
                 />
               ) : null}
 
@@ -734,6 +1186,49 @@ function WorkspaceSubNav({
         })}
       </div>
       {!artifacts.length ? <EmptyCompact label="No artifacts" /> : null}
+    </div>
+  );
+}
+
+function PublishedPostsSubNav({
+  onSelectProfile,
+  posts,
+  profileGroups,
+  selectedProfile
+}: {
+  onSelectProfile: (profile: WorkspaceProfile) => void;
+  posts: XhsPublishedPost[];
+  profileGroups: Record<string, WorkspaceProfile[]>;
+  selectedProfile: WorkspaceProfile | null;
+}) {
+  const xhsProfiles = profileGroups.xiaohongshu ?? [];
+  const totalEngagement = posts.reduce(
+    (sum, post) => sum + (post.stats.likes ?? 0) + (post.stats.collects ?? 0) + (post.stats.comments ?? 0),
+    0
+  );
+  return (
+    <div className="sub-nav-body">
+      <SectionLabel icon={ImageIcon} label="XHS profiles" />
+      {xhsProfiles.map((profile) => (
+        <button
+          className={cn("sub-nav-row", selectedProfile?.profile === profile.profile && "sub-nav-row-active")}
+          key={`${profile.platform}/${profile.profile}`}
+          onClick={() => onSelectProfile(profile)}
+          type="button"
+        >
+          <span className="truncate">{profile.profile}</span>
+          <Badge variant="outline">{profile.artifactCount}</Badge>
+        </button>
+      ))}
+      {!xhsProfiles.length ? <EmptyCompact label="No XHS profiles" /> : null}
+
+      <Separator />
+
+      <SectionLabel icon={Gauge} label="Published" />
+      <MetricRow label="Posts" value={String(posts.length)} />
+      <MetricRow label="Engagement" value={formatCompactNumber(totalEngagement)} />
+      <MetricRow label="Needs review" value={String(posts.filter((post) => post.status === "needs-review").length)} />
+      <MetricRow label="Archived" value={String(posts.filter((post) => post.status === "archived").length)} />
     </div>
   );
 }
@@ -842,28 +1337,132 @@ function CronSubNav({
 }
 
 function ChatSubNav({
+  activeRunId,
+  activeSession,
   agents,
+  onDeleteSession,
   onNewChat,
+  onRenameSession,
+  onSelectAgent,
+  onSelectSession,
   selectedAgent,
-  status
+  sessions
+}: {
+  activeRunId: string | null;
+  activeSession?: ChatSession;
+  agents: SocialAgent[];
+  onDeleteSession: (sessionId: string) => void;
+  onNewChat: () => void;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onSelectAgent: (agentId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  selectedAgent?: SocialAgent;
+  sessions: ChatSession[];
+}) {
+  const activeMessageCount = activeSession ? countChatSessionMessages(activeSession) : 0;
+  return (
+    <div className="sub-nav-body">
+      <SectionLabel icon={MessageSquare} label="Session management" />
+      <Button className="w-full justify-start" disabled={Boolean(activeRunId)} onClick={onNewChat} type="button" variant="outline">
+        <Plus className="size-3.5" />
+        New session
+      </Button>
+
+      {activeSession ? (
+        <div className="chat-session-editor">
+          <label htmlFor="chat-session-name">Session name</label>
+          <Input
+            id="chat-session-name"
+            onChange={(event) => onRenameSession(activeSession.id, event.target.value)}
+            placeholder={chatDefaultSessionTitle}
+            value={activeSession.title}
+          />
+          <div className="chat-session-meta">
+            <span title={activeSession.id}>{activeSession.id}</span>
+            <Badge variant="outline">{activeRunId ? "running" : "active"}</Badge>
+          </div>
+        </div>
+      ) : (
+        <EmptyCompact label="No active session" />
+      )}
+
+      <div className="chat-session-agent">
+        <span>Agent</span>
+        <Select disabled={!agents.length || Boolean(activeRunId)} onValueChange={onSelectAgent} value={selectedAgent?.id}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select agent" />
+          </SelectTrigger>
+          <SelectContent>
+            {agents.map((agent) => (
+              <SelectItem key={agent.id} value={agent.id}>
+                {agent.id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <MetricRow label="Sessions" value={String(sessions.length)} />
+      <MetricRow label="Messages" value={String(activeMessageCount)} />
+      <MetricRow label="Updated" value={activeSession ? formatChatSessionTime(activeSession.updatedAt) : "never"} />
+      <Separator />
+      <SectionLabel icon={Archive} label="Sessions" />
+      <div className="chat-session-list">
+        {sessions.map((session) => {
+          const isActive = activeSession?.id === session.id;
+          return (
+            <div className={cn("chat-session-row", isActive && "sub-nav-row-active")} key={session.id}>
+              <button
+                aria-current={isActive ? "page" : undefined}
+                className="chat-session-select"
+                disabled={Boolean(activeRunId) && !isActive}
+                onClick={() => onSelectSession(session.id)}
+                type="button"
+              >
+                <span>{displayChatSessionTitle(session)}</span>
+                <small>{formatChatSessionSummary(session)}</small>
+              </button>
+              <Button
+                aria-label={`Delete ${displayChatSessionTitle(session)}`}
+                disabled={Boolean(activeRunId)}
+                onClick={() => onDeleteSession(session.id)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <Trash2 className="size-3" />
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+      {!sessions.length ? <EmptyCompact label="No sessions" /> : null}
+    </div>
+  );
+}
+
+function SkillsSubNav({
+  agents,
+  onSelectAgent,
+  selectedAgent,
+  skills
 }: {
   agents: SocialAgent[];
-  onNewChat: () => void;
+  onSelectAgent: (agentId: string) => void;
   selectedAgent?: SocialAgent;
-  status: HermesChatStatus | null;
+  skills: HermesSkillInfo[];
 }) {
+  const enabled = skills.filter((skill) => skill.enabled).length;
+  const categories = new Set(skills.map((skill) => skill.category || "uncategorized")).size;
   return (
     <div className="sub-nav-body">
       <SectionLabel icon={Bot} label="Agents" />
-      <AgentList agents={agents} selectedAgent={selectedAgent} />
-      <MetricRow label="Gateway" value={status?.available ? "online" : "offline"} />
-      <MetricRow label="Model" value={status?.capabilities?.model ?? "unknown"} />
+      <AgentList agents={agents} onSelectAgent={onSelectAgent} selectedAgent={selectedAgent} />
       <Separator />
-      <SectionLabel icon={MessageSquare} label="Threads" />
-      <button className="sub-nav-row sub-nav-row-active" onClick={onNewChat} type="button">
-        <span className="truncate">New chat</span>
-        <Badge variant="outline">draft</Badge>
-      </button>
+      <SectionLabel icon={Gauge} label="Inventory" />
+      <MetricRow label="Enabled" value={String(enabled)} />
+      <MetricRow label="Disabled" value={String(skills.length - enabled)} />
+      <MetricRow label="Categories" value={String(categories)} />
     </div>
   );
 }
@@ -960,6 +1559,198 @@ function MarkdownPreview({ artifact, content }: { artifact: ArtifactInfo; conten
         {content}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function PublishedPostsView({
+  busy,
+  notice,
+  onSearchChange,
+  onStatusFilterChange,
+  onSync,
+  onUpdate,
+  posts,
+  search,
+  selectedProfile,
+  statusFilter
+}: {
+  busy: string | null;
+  notice: string | null;
+  onSearchChange: (value: string) => void;
+  onStatusFilterChange: (value: XhsPublishedPostStatus | "all") => void;
+  onSync: () => void;
+  onUpdate: (post: XhsPublishedPost, patch: { status?: XhsPublishedPostStatus; statusNote?: string; keyword?: string }) => void;
+  posts: XhsPublishedPost[];
+  search: string;
+  selectedProfile: WorkspaceProfile | null;
+  statusFilter: XhsPublishedPostStatus | "all";
+}) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = posts.filter((post) => {
+    const matchesStatus = statusFilter === "all" || post.status === statusFilter;
+    if (!matchesStatus) return false;
+    if (!normalizedSearch) return true;
+    return [post.title, post.description, post.keyword, post.statusNote]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+  });
+  const visible = filtered.filter((post) => post.status !== "archived" || statusFilter === "archived");
+
+  return (
+    <section className="published-shell" aria-label="Published Xiaohongshu posts">
+      <div className="published-toolbar">
+        <div className="published-toolbar-title">
+          <p>{selectedProfile ? `xiaohongshu/${selectedProfile.profile}` : "No XHS profile selected"}</p>
+          <h3>已发布推文</h3>
+        </div>
+        <div className="published-toolbar-actions">
+          <div className="published-search">
+            <Search className="size-3.5" />
+            <Input onChange={(event) => onSearchChange(event.target.value)} placeholder="搜索标题、关键词、备注" value={search} />
+          </div>
+          <Select onValueChange={(value) => onStatusFilterChange(value as XhsPublishedPostStatus | "all")} value={statusFilter}>
+            <SelectTrigger aria-label="Status filter" className="published-status-filter" size="sm">
+              <SlidersHorizontal className="size-3.5" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {publishedPostStatusOptions.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option === "all" ? "全部状态" : publishedPostStatusLabel[option]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button disabled={!selectedProfile || busy === "published-sync"} onClick={onSync} size="sm" type="button" variant="outline">
+            {busy === "published-sync" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
+            同步
+          </Button>
+        </div>
+      </div>
+
+      {notice ? <div className="published-notice">{notice}</div> : null}
+
+      {visible.length ? (
+        <div className="published-masonry">
+          {visible.map((post, index) => (
+            <PublishedPostCard busy={busy} index={index} key={post.id} onUpdate={onUpdate} post={post} />
+          ))}
+        </div>
+      ) : (
+        <div className="published-empty">
+          <ImageIcon className="size-6" />
+          <span>{posts.length ? "没有匹配的推文。" : "还没有已发布推文记录。可从 xhs my-notes 同步，或在 metrics.csv 记录数据。"}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PublishedPostCard({
+  busy,
+  index,
+  onUpdate,
+  post
+}: {
+  busy: string | null;
+  index: number;
+  onUpdate: (post: XhsPublishedPost, patch: { status?: XhsPublishedPostStatus; statusNote?: string; keyword?: string }) => void;
+  post: XhsPublishedPost;
+}) {
+  const engagement = (post.stats.likes ?? 0) + (post.stats.collects ?? 0) + (post.stats.comments ?? 0);
+  return (
+    <article className={cn("published-note-card", post.status === "archived" && "published-note-card-muted")}>
+      <div className="published-note-cover" style={{ aspectRatio: publishedCardAspect(index, post) }}>
+        {post.coverUrl ? (
+          <img alt={post.title} loading="lazy" src={post.coverUrl} />
+        ) : (
+          <div className={cn("published-note-cover-fallback", `published-tone-${index % 6}`)}>
+            <span>{post.title}</span>
+          </div>
+        )}
+        <div className="published-note-cover-top">
+          <StatusBadge state={publishedStatusState(post.status)} label={publishedPostStatusLabel[post.status]} />
+          {post.contentType === "video" ? <Badge variant="secondary">视频</Badge> : null}
+        </div>
+      </div>
+
+      <div className="published-note-body">
+        <div className="published-note-title-row">
+          <h4 title={post.title}>{post.title}</h4>
+          {post.url ? (
+            <a aria-label="Open Xiaohongshu post" className="published-note-link" href={post.url} rel="noreferrer" target="_blank">
+              <ExternalLink className="size-3.5" />
+            </a>
+          ) : null}
+        </div>
+        <div className="published-note-meta">
+          <span className="published-author">
+            {post.authorAvatarUrl ? <img alt="" src={post.authorAvatarUrl} /> : <span className="published-author-dot" />}
+            <span>{post.authorName ?? post.profile}</span>
+          </span>
+          <span>{formatPublishedDate(post.publishedAt ?? post.syncedAt ?? post.updatedAt)}</span>
+        </div>
+        <div className="published-note-stats">
+          <span title="Views">
+            <Eye className="size-3.5" />
+            {formatCompactNumber(post.stats.views)}
+          </span>
+          <span title="Likes">
+            <Heart className="size-3.5" />
+            {formatCompactNumber(post.stats.likes)}
+          </span>
+          <span title="Collects">
+            <Bookmark className="size-3.5" />
+            {formatCompactNumber(post.stats.collects)}
+          </span>
+          <span title="Comments">
+            <MessageSquare className="size-3.5" />
+            {formatCompactNumber(post.stats.comments)}
+          </span>
+          <span title="Shares">
+            <Share2 className="size-3.5" />
+            {formatCompactNumber(post.stats.shares)}
+          </span>
+        </div>
+        <div className="published-note-controls">
+          <Select onValueChange={(value) => onUpdate(post, { status: value as XhsPublishedPostStatus })} value={post.status}>
+            <SelectTrigger aria-label="Post status" className="published-note-status-select" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {publishedPostStatusOptions
+                .filter((option): option is XhsPublishedPostStatus => option !== "all")
+                .map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {publishedPostStatusLabel[option]}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <Button
+            aria-label="Archive post"
+            disabled={busy === `published-update-${post.id}` || post.status === "archived"}
+            onClick={() => onUpdate(post, { status: "archived" })}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            {busy === `published-update-${post.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+          </Button>
+        </div>
+        <Input
+          className="published-note-input"
+          defaultValue={post.statusNote ?? ""}
+          key={`${post.id}-${post.statusNote ?? ""}`}
+          onBlur={(event) => {
+            if (event.currentTarget.value.trim() !== (post.statusNote ?? "")) {
+              onUpdate(post, { statusNote: event.currentTarget.value });
+            }
+          }}
+          placeholder={engagement ? `互动 ${formatCompactNumber(engagement)}` : "复盘备注"}
+        />
+      </div>
+    </article>
   );
 }
 
@@ -1131,26 +1922,60 @@ function CronView({
 
 function ChatView({
   activeRunId,
+  attachments,
+  composerNotice,
   draft,
   events,
+  model,
+  onAttachFiles,
   onApprove,
   onDraftChange,
+  onModelChange,
+  onPermissionModeChange,
+  onReasoningEffortChange,
+  onRemoveAttachment,
   onSend,
   onStop,
+  permissionMode,
+  reasoningEffort,
   selectedAgent,
+  skills,
   status
 }: {
   activeRunId: string | null;
+  attachments: ChatAttachment[];
+  composerNotice: string | null;
   draft: string;
   events: HermesChatEvent[];
+  model: string;
+  onAttachFiles: (files: FileList | null) => void;
   onApprove: (runId: string, choice: string) => void;
   onDraftChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onPermissionModeChange: (value: ChatPermissionMode) => void;
+  onReasoningEffortChange: (value: ChatReasoningEffort) => void;
+  onRemoveAttachment: (id: string) => void;
   onSend: () => void;
   onStop: () => void;
+  permissionMode: ChatPermissionMode;
+  reasoningEffort: ChatReasoningEffort;
   selectedAgent?: SocialAgent;
+  skills: HermesSkillInfo[];
   status: HermesChatStatus | null;
 }) {
   const transcript = buildChatTranscript(events);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [listening, setListening] = useState(false);
+  const speechAvailable = Boolean(getSpeechRecognitionConstructor());
+  const mentionQuery = activeRunId ? null : activeSkillMentionQuery(draft);
+  const mentionMatches =
+    mentionQuery === null
+      ? []
+      : uniqueHermesSkillsByName(skills)
+          .filter((skill) => skill.enabled && skill.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+          .sort(sortHermesSkills)
+          .slice(0, 8);
+  const mentionedSkills = resolveSkillMentions(draft, skills).skills;
   return (
     <div className="chat-shell">
       <div className="chat-transcript">
@@ -1165,32 +1990,177 @@ function ChatView({
           </div>
         )}
       </div>
-      <div className="chat-runtime-bar">
-        <StatusBadge state={status?.available ? "ok" : "bad"} label={status?.available ? "Hermes API online" : "Hermes API offline"} />
-        <span className="truncate">{status?.available ? status.baseUrl : status?.error ?? "api_server unavailable"}</span>
-        {activeRunId ? <Badge variant="outline">{activeRunId}</Badge> : null}
-      </div>
-      <div className="chat-composer">
-        <Textarea
-          disabled={Boolean(activeRunId)}
-          onChange={(event) => onDraftChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSend();
-          }}
-          placeholder="Message the agent..."
-          value={draft}
-        />
-        {activeRunId ? (
-          <Button aria-label="Stop run" onClick={onStop} size="icon" type="button" variant="destructive">
-            <Square className="size-4" />
-          </Button>
-        ) : (
-          <Button disabled={!draft.trim() || !status?.available} onClick={onSend} size="icon" type="button">
-            <Send className="size-4" />
-          </Button>
-        )}
+      <div className="chat-dock">
+        {mentionedSkills.length || activeRunId ? (
+          <div className="chat-runtime-bar">
+            {mentionedSkills.map((skill) => (
+              <Badge key={skill.name} variant="outline">
+                ${skill.name}
+              </Badge>
+            ))}
+            {activeRunId ? <Badge variant="outline">{activeRunId}</Badge> : null}
+          </div>
+        ) : null}
+        <div className="chat-composer">
+          <div className="chat-composer-input">
+            {mentionQuery !== null ? (
+              <div className="skill-mention-menu">
+                {mentionMatches.length ? (
+                  mentionMatches.map((skill) => (
+                    <button key={skill.path} onClick={() => onDraftChange(insertSkillMention(draft, skill.name))} type="button">
+                      <span>${skill.name}</span>
+                      <small>{skill.category || "uncategorized"}</small>
+                    </button>
+                  ))
+                ) : (
+                  <div className="skill-mention-empty">No matching enabled skills</div>
+                )}
+              </div>
+            ) : null}
+            <Textarea
+              disabled={Boolean(activeRunId)}
+              onChange={(event) => onDraftChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing && (event.shiftKey || event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  onSend();
+                }
+              }}
+              placeholder="Message the agent... use $skill"
+              value={draft}
+            />
+            {attachments.length ? (
+              <div className="chat-attachments">
+                {attachments.map((attachment) => (
+                  <span className="chat-attachment-pill" key={attachment.id}>
+                    <FileText className="size-3.5" />
+                    <span>{attachment.name}</span>
+                    <button aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(attachment.id)} type="button">
+                      <Trash2 className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {composerNotice ? <div className="chat-composer-notice">{composerNotice}</div> : null}
+          </div>
+          <div className="chat-composer-controls">
+            <input
+              accept=".txt,.md,.markdown,.json,.csv,text/*,application/json"
+              className="sr-only"
+              multiple
+              onChange={(event) => {
+                onAttachFiles(event.currentTarget.files);
+                event.currentTarget.value = "";
+              }}
+              ref={fileInputRef}
+              type="file"
+            />
+            <Button
+              aria-label="Attach files"
+              disabled={Boolean(activeRunId)}
+              onClick={() => fileInputRef.current?.click()}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <Plus className="size-4" />
+            </Button>
+            <Select onValueChange={(value) => onPermissionModeChange(value as ChatPermissionMode)} value={permissionMode}>
+              <SelectTrigger aria-label="Permission mode" className="chat-control-select" size="sm">
+                <ShieldCheck className="size-3.5 text-orange-600" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start" className="chat-select-content chat-permission-menu" position="popper" sideOffset={8}>
+                <SelectItem className="chat-select-item" value="full_access">
+                  {chatPermissionLabels.full_access}
+                </SelectItem>
+                <SelectItem className="chat-select-item" value="ask">
+                  {chatPermissionLabels.ask}
+                </SelectItem>
+                <SelectItem className="chat-select-item" value="read_only">
+                  {chatPermissionLabels.read_only}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Select onValueChange={onModelChange} value={model}>
+              <SelectTrigger aria-label="Model" className="chat-model-select" size="sm">
+                <Zap className="size-3.5" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start" className="chat-select-content chat-model-menu" position="popper" sideOffset={8}>
+                {chatModelOptions.map((option) => (
+                  <SelectItem className="chat-select-item" key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select onValueChange={(value) => onReasoningEffortChange(value as ChatReasoningEffort)} value={reasoningEffort}>
+              <SelectTrigger aria-label="Reasoning effort" className="chat-effort-select" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start" className="chat-select-content chat-effort-menu" position="popper" sideOffset={8}>
+                <SelectItem className="chat-select-item" value="low">
+                  {chatReasoningLabels.low}
+                </SelectItem>
+                <SelectItem className="chat-select-item" value="medium">
+                  {chatReasoningLabels.medium}
+                </SelectItem>
+                <SelectItem className="chat-select-item" value="high">
+                  {chatReasoningLabels.high}
+                </SelectItem>
+                <SelectItem className="chat-select-item" value="xhigh">
+                  {chatReasoningLabels.xhigh}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              aria-label="Voice input"
+              className={cn(listening && "chat-control-active")}
+              disabled={Boolean(activeRunId) || !speechAvailable}
+              onClick={() => {
+                const recognition = createSpeechRecognition({
+                  onEnd: () => setListening(false),
+                  onResult: (text) => onDraftChange([draft, text].filter(Boolean).join(draft ? "\n" : ""))
+                });
+                if (!recognition) return;
+                setListening(true);
+                recognition.start();
+              }}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <Mic className="size-4" />
+            </Button>
+            <ChatConnectionStatus status={status} />
+            {activeRunId ? (
+              <Button aria-label="Stop run" onClick={onStop} size="icon" type="button" variant="destructive">
+                <Square className="size-4" />
+              </Button>
+            ) : (
+              <Button disabled={(!draft.trim() && !attachments.length) || !status?.available} onClick={onSend} size="icon" type="button">
+                <Send className="size-4" />
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
+  );
+}
+
+function ChatConnectionStatus({ status }: { status: HermesChatStatus | null }) {
+  const available = Boolean(status?.available);
+  const label = available ? "Hermes API online" : "Hermes API offline";
+  const detail = available ? status?.baseUrl : status?.error ?? "api_server unavailable";
+  return (
+    <span className={cn("chat-connection-status", available ? "chat-connection-status-ok" : "chat-connection-status-bad")} title={detail}>
+      <span className="chat-connection-dot" />
+      <span className="chat-connection-label">{label}</span>
+      <span className="chat-connection-detail">{detail}</span>
+    </span>
   );
 }
 
@@ -1342,6 +2312,74 @@ function buildChatTranscript(events: HermesChatEvent[]): ChatTranscriptItemModel
   return items.filter((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval");
 }
 
+function SkillsView({
+  agent,
+  busy,
+  onRefresh,
+  onSearchChange,
+  onToggle,
+  search,
+  skills
+}: {
+  agent?: SocialAgent;
+  busy: string | null;
+  onRefresh: () => void;
+  onSearchChange: (value: string) => void;
+  onToggle: (skill: HermesSkillInfo) => void;
+  search: string;
+  skills: HermesSkillInfo[];
+}) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = skills.filter((skill) => {
+    if (!normalizedSearch) return true;
+    return [skill.name, skill.category, skill.description].some((value) => value.toLowerCase().includes(normalizedSearch));
+  }).sort(sortHermesSkills);
+  const enabled = skills.filter((skill) => skill.enabled).length;
+  return (
+    <div className="skills-shell">
+      <div className="skills-toolbar">
+        <div>
+          <p>{agent ? `${agent.id} / ${agent.runner}` : "No agent selected"}</p>
+          <h3>{enabled} enabled skills</h3>
+        </div>
+        <div className="skills-toolbar-actions">
+          <Input onChange={(event) => onSearchChange(event.target.value)} placeholder="Search skills" value={search} />
+          <Button onClick={onRefresh} size="sm" type="button" variant="outline">
+            <RefreshCcw className="size-3.5" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="skills-list">
+        {filtered.map((skill) => (
+          <article className={cn("skill-card", !skill.enabled && "skill-card-disabled")} key={skill.path}>
+            <div className="skill-card-main">
+              <div className="skill-card-title">
+                <h4>${skill.name}</h4>
+                <Badge variant={skill.enabled ? "secondary" : "outline"}>{skill.status}</Badge>
+              </div>
+              <p>{skill.description || "No description"}</p>
+              <span>{skill.category || "uncategorized"}</span>
+            </div>
+            <Button
+              disabled={busy === `skill-${skill.name}`}
+              onClick={() => onToggle(skill)}
+              size="sm"
+              type="button"
+              variant={skill.enabled ? "outline" : "secondary"}
+            >
+              {busy === `skill-${skill.name}` ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {skill.enabled ? "Disable" : "Enable"}
+            </Button>
+          </article>
+        ))}
+        {!filtered.length ? <EmptyWide label="No matching skills." /> : null}
+      </div>
+    </div>
+  );
+}
+
 function JobsView({ job }: { job: JobSnapshot | null }) {
   return (
     <Card className="h-full min-h-[520px]">
@@ -1468,15 +2506,35 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AgentList({ agents, selectedAgent }: { agents: SocialAgent[]; selectedAgent?: SocialAgent }) {
+function AgentList({
+  agents,
+  onSelectAgent,
+  selectedAgent
+}: {
+  agents: SocialAgent[];
+  onSelectAgent?: (agentId: string) => void;
+  selectedAgent?: SocialAgent;
+}) {
   return (
     <div className="space-y-1">
-      {agents.map((agent) => (
-        <div className={cn("sub-nav-row", selectedAgent?.id === agent.id && "sub-nav-row-active")} key={agent.id}>
-          <span className="truncate">{agent.id}</span>
-          <Badge variant="outline">{agent.runner}</Badge>
-        </div>
-      ))}
+      {agents.map((agent) => {
+        const row = (
+          <>
+            <span className="truncate">{agent.id}</span>
+            <Badge variant="outline">{agent.runner}</Badge>
+          </>
+        );
+        const className = cn("sub-nav-row", selectedAgent?.id === agent.id && "sub-nav-row-active");
+        return onSelectAgent ? (
+          <button className={className} key={agent.id} onClick={() => onSelectAgent(agent.id)} type="button">
+            {row}
+          </button>
+        ) : (
+          <div className={className} key={agent.id}>
+            {row}
+          </div>
+        );
+      })}
       {!agents.length ? <EmptyCompact label="No agents" /> : null}
     </div>
   );
@@ -1499,9 +2557,114 @@ function EmptyWide({ label }: { label: string }) {
   return <div className="empty-state col-span-full">{label}</div>;
 }
 
+function loadChatSessionState(): ChatSessionState {
+  const sessions = readStoredChatSessions();
+  const activeId = localStorage.getItem(activeChatSessionStorageKey);
+  const activeSession = sessions.find((session) => session.id === activeId) ?? sessions[0];
+  if (activeSession) return { sessions, activeId: activeSession.id };
+
+  const session = createChatSession();
+  return { sessions: [session], activeId: session.id };
+}
+
+function readStoredChatSessions(): ChatSession[] {
+  try {
+    const raw = localStorage.getItem(chatSessionsStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return sortChatSessions(parsed.map(normalizeStoredChatSession).filter((session): session is ChatSession => Boolean(session))).slice(
+      0,
+      chatSessionLimit
+    );
+  } catch {
+    return [];
+  }
+}
+
+function normalizeStoredChatSession(value: unknown): ChatSession | null {
+  if (!isRecord(value)) return null;
+  const now = Date.now();
+  const id = typeof value.id === "string" && value.id.trim() ? value.id : createChatSessionId();
+  const events = Array.isArray(value.events) ? value.events.filter(isHermesChatEvent) : [];
+  const title =
+    typeof value.title === "string" && value.title.trim()
+      ? value.title.slice(0, 80)
+      : deriveChatSessionTitle(String(events.find((event) => event.event === "message.user")?.message ?? ""));
+  const createdAt = typeof value.createdAt === "number" && Number.isFinite(value.createdAt) ? value.createdAt : now;
+  const updatedAt = typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : createdAt;
+  return {
+    id,
+    title,
+    createdAt,
+    updatedAt,
+    agentId: typeof value.agentId === "string" && value.agentId.trim() ? value.agentId : undefined,
+    events
+  };
+}
+
+function createChatSession(agentId?: string): ChatSession {
+  const now = Date.now();
+  return {
+    id: createChatSessionId(),
+    title: chatDefaultSessionTitle,
+    createdAt: now,
+    updatedAt: now,
+    agentId,
+    events: []
+  };
+}
+
+function createChatSessionId(): string {
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sortChatSessions(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function deriveChatSessionTitle(message: string): string {
+  const title = message.replace(/\s+/g, " ").trim();
+  if (!title) return chatDefaultSessionTitle;
+  return title.length > 46 ? `${title.slice(0, 43)}...` : title;
+}
+
+function displayChatSessionTitle(session: ChatSession): string {
+  return session.title.trim() || chatDefaultSessionTitle;
+}
+
+function countChatSessionMessages(session: ChatSession): number {
+  return buildChatTranscript(session.events).filter((item) => item.kind === "user" || item.kind === "assistant").length;
+}
+
+function formatChatSessionSummary(session: ChatSession): string {
+  const messages = countChatSessionMessages(session);
+  return `${messages} messages / ${formatChatSessionTime(session.updatedAt)}`;
+}
+
+function formatChatSessionTime(value: number): string {
+  if (!Number.isFinite(value)) return "never";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isHermesChatEvent(value: unknown): value is HermesChatEvent {
+  return isRecord(value) && typeof value.event === "string";
+}
+
 function topbarContext(activeView: DashboardView, selectedProfile: WorkspaceProfile | null): string {
   if (activeView === "workspace") return `~/.growth/${selectedProfile?.platform ?? "xiaohongshu"}/${selectedProfile?.profile ?? ""}`;
+  if (activeView === "published") return selectedProfile ? `published xhs notes / ${selectedProfile.profile}` : "published xhs notes";
   if (activeView === "chat") return "agent conversation";
+  if (activeView === "skills") return "Hermes profile skills";
   if (activeView === "setup") return "runtime and auth";
   return selectedProfile ? `${selectedProfile.platform}/${selectedProfile.profile}` : "social media operations";
 }
@@ -1601,57 +2764,95 @@ function syntheticDirectory(path: string, seed: ArtifactInfo): ArtifactInfo {
   };
 }
 
+function sortHermesSkills(a: HermesSkillInfo, b: HermesSkillInfo): number {
+  if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+  return a.category.localeCompare(b.category) || a.name.localeCompare(b.name);
+}
+
+function uniqueHermesSkillsByName(skills: HermesSkillInfo[]): HermesSkillInfo[] {
+  const byName = new Map<string, HermesSkillInfo>();
+  for (const skill of skills) {
+    const key = skill.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, skill);
+  }
+  return [...byName.values()];
+}
+
+function activeSkillMentionQuery(value: string): string | null {
+  const match = /(?:^|\s)\$([a-zA-Z0-9_.:-]*)$/.exec(value);
+  return match ? (match[1] ?? "") : null;
+}
+
+function insertSkillMention(value: string, skillName: string): string {
+  const replacement = `$${skillName} `;
+  return value.replace(/(^|\s)\$([a-zA-Z0-9_.:-]*)$/, (_match, prefix: string) => `${prefix}${replacement}`);
+}
+
+function extractSkillMentionNames(value: string): string[] {
+  const names = new Set<string>();
+  for (const match of value.matchAll(/(?:^|\s)\$([a-zA-Z0-9_.:-]+)/g)) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+function resolveSkillMentions(value: string, skills: HermesSkillInfo[]): { skills: HermesSkillInfo[]; error?: string } {
+  const byName = new Map(skills.map((skill) => [skill.name.toLowerCase(), skill]));
+  const names = extractSkillMentionNames(value);
+  const resolved: HermesSkillInfo[] = [];
+  for (const name of names) {
+    const skill = byName.get(name.toLowerCase());
+    if (!skill) return { skills: resolved, error: `skill_not_found:${name}` };
+    if (!skill.enabled) return { skills: resolved, error: `skill_disabled:${name}` };
+    resolved.push(skill);
+  }
+  return { skills: resolved.sort(sortHermesSkills) };
+}
+
+function buildSkillInstructions(skills: HermesSkillInfo[]): string | undefined {
+  if (!skills.length) return undefined;
+  const lines = skills.map((skill) => `- $${skill.name} (${skill.category || "uncategorized"}): ${skill.description || skill.path}`);
+  return [
+    "The user explicitly selected these enabled Hermes skills for this run.",
+    "Treat $skill tokens in the user message as skill selection hints and apply the matching local skill behavior when relevant.",
+    ...lines
+  ].join("\n");
+}
+
 async function getHermesChatStatus(): Promise<HermesChatStatus> {
   try {
-    const [health, capabilities] = await Promise.all([
-      hermesJson<HermesChatStatus["health"]>("/health/detailed", { auth: false, timeoutMs: 2500 }),
-      hermesJson<HermesChatStatus["capabilities"]>("/v1/capabilities", { timeoutMs: 2500 })
-    ]);
-    return {
-      available: true,
-      baseUrl: hermesApiBaseUrl,
-      health,
-      capabilities
-    };
+    return await api<HermesChatStatus>("/api/chat/hermes/status");
   } catch (error) {
     return {
       available: false,
-      baseUrl: hermesApiBaseUrl,
-      error: error instanceof Error ? error.message : "hermes_api_unavailable"
+      baseUrl: "/api/chat",
+      error: error instanceof Error ? error.message : "chat_api_unavailable"
     };
   }
 }
 
-async function createHermesChatRun(message: string, sessionId: string, hermesSessionId: string): Promise<HermesChatRunResponse> {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  applyHermesAuthHeaders(headers);
-  if (hermesApiKey) headers.set("X-Hermes-Session-Key", hermesSessionId);
-
-  const payload = await hermesJson<{ run_id?: string; status?: string }>("/v1/runs", {
+async function createHermesChatRun(
+  input: string | HermesChatMessage[],
+  sessionId: string,
+  options: HermesChatRunOptions
+): Promise<HermesChatRunResponse> {
+  return await api<HermesChatRunResponse>("/api/chat/runs", {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: message,
-      session_id: hermesSessionId
-    }),
-    timeoutMs: 15000,
-    auth: false
+      agentId: options.agentId,
+      input,
+      sessionId,
+      instructions: options.instructions,
+      model: options.model,
+      permissionMode: options.permissionMode,
+      reasoningEffort: options.reasoningEffort
+    })
   });
-  const runId = payload.run_id ?? "";
-  if (!/^run_[a-f0-9]+$/i.test(runId)) throw new Error("invalid_hermes_run_response");
-  return {
-    runId,
-    status: payload.status ?? "started",
-    sessionId,
-    hermesSessionId
-  };
 }
 
 async function consumeHermesRunEvents(runId: string, signal: AbortSignal, onEvent: (event: HermesChatEvent) => void): Promise<void> {
-  const response = await fetch(hermesUrl(`/v1/runs/${encodeURIComponent(runId)}/events`), {
-    headers: hermesAuthHeaders(),
-    signal
-  });
+  const response = await fetch(`/api/chat/runs/${encodeURIComponent(runId)}/events`, { signal });
   if (!response.ok) throw new Error(await hermesErrorMessage(response));
   if (!response.body) throw new Error("hermes_event_stream_unavailable");
 
@@ -1676,19 +2877,15 @@ async function consumeHermesRunEvents(runId: string, signal: AbortSignal, onEven
 }
 
 async function approveHermesRun(runId: string, choice: string): Promise<void> {
-  await hermesJson(`/v1/runs/${encodeURIComponent(runId)}/approval`, {
+  await api(`/api/chat/runs/${encodeURIComponent(runId)}/approval`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ choice }),
-    timeoutMs: 10000
+    body: JSON.stringify({ choice })
   });
 }
 
 async function stopHermesRun(runId: string): Promise<void> {
-  await hermesJson(`/v1/runs/${encodeURIComponent(runId)}/stop`, {
-    method: "POST",
-    timeoutMs: 10000
-  });
+  await api(`/api/chat/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
 }
 
 function parseHermesSseEvent(raw: string): HermesChatEvent | null {
@@ -1702,67 +2899,103 @@ function parseHermesSseEvent(raw: string): HermesChatEvent | null {
   return JSON.parse(data) as HermesChatEvent;
 }
 
-interface HermesJsonOptions extends RequestInit {
-  auth?: boolean;
-  timeoutMs?: number;
-}
-
-async function hermesJson<T>(path: string, options: HermesJsonOptions = {}): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
-  try {
-    const headers = new Headers(options.headers);
-    if (options.auth !== false) applyHermesAuthHeaders(headers);
-    const response = await fetch(hermesUrl(path), {
-      ...options,
-      headers,
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(await hermesErrorMessage(response));
-    return (await response.json()) as T;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw new Error("hermes_api_timeout");
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
-  }
+function buildHermesChatInput(events: HermesChatEvent[], nextUserMessage: string): HermesChatMessage[] {
+  const prior = buildChatTranscript(events)
+    .filter((item): item is ChatTranscriptItemModel & { kind: "user" | "assistant" } => item.kind === "user" || item.kind === "assistant")
+    .map((item) => ({ role: item.kind, content: item.text.trim() }))
+    .filter((item) => item.content)
+    .slice(-16);
+  return [...prior, { role: "user", content: nextUserMessage }];
 }
 
 async function hermesErrorMessage(response: Response): Promise<string> {
   const fallback = `${response.status} ${response.statusText}`.trim();
   try {
-    const payload = (await response.json()) as { error?: { message?: string } };
-    return payload.error?.message ?? fallback;
+    const payload = (await response.json()) as { error?: string | { message?: string }; message?: string };
+    if (typeof payload.error === "string") return payload.error;
+    return payload.error?.message ?? payload.message ?? fallback;
   } catch {
     return fallback;
   }
 }
 
-function hermesUrl(path: string): string {
-  return `${hermesApiBaseUrl}${path}`;
+function normalizeChatReasoningEffort(value: string): ChatReasoningEffort {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : "xhigh";
 }
 
-function hermesAuthHeaders(): Headers {
-  const headers = new Headers();
-  applyHermesAuthHeaders(headers);
-  return headers;
+function normalizeChatPermissionMode(value: string): ChatPermissionMode {
+  return value === "full_access" || value === "ask" || value === "read_only" ? value : "ask";
 }
 
-function applyHermesAuthHeaders(headers: Headers): void {
-  if (hermesApiKey) headers.set("Authorization", `Bearer ${hermesApiKey}`);
+function isSupportedChatAttachment(file: File): boolean {
+  if (file.type.startsWith("text/")) return true;
+  return /\.(txt|md|markdown|json|csv|log|yaml|yml)$/i.test(file.name) || file.type === "application/json";
 }
 
-function normalizeBaseUrl(value: string): string {
-  return value.replace(/\/+$/, "");
+function truncateAttachmentContent(content: string): string {
+  if (content.length <= chatAttachmentMaxChars) return content;
+  return `${content.slice(0, chatAttachmentMaxChars)}\n\n[truncated:${content.length - chatAttachmentMaxChars} chars]`;
 }
 
-function normalizeSessionPart(value: string): string {
-  return value.trim().replace(/[^a-zA-Z0-9_.:-]+/g, "_").slice(0, 96) || "chat";
+function summarizeAttachments(attachments: ChatAttachment[]): string {
+  return attachments.map((attachment) => `[attachment] ${attachment.name}`).join("\n");
+}
+
+function buildChatMessageWithAttachments(message: string, attachments: ChatAttachment[]): string {
+  if (!attachments.length) return message;
+  const rendered = attachments
+    .map(
+      (attachment) =>
+        `### ${attachment.name}\n\n- MIME: ${attachment.mime || "text/plain"}\n- Size: ${formatBytes(attachment.size)}\n\n${attachment.content}`
+    )
+    .join("\n\n");
+  return [message, "Attached local context:", rendered].filter(Boolean).join("\n\n");
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  start: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
+function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
+  const candidate = globalThis as typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return candidate.SpeechRecognition ?? candidate.webkitSpeechRecognition ?? null;
+}
+
+function createSpeechRecognition({ onEnd, onResult }: { onEnd: () => void; onResult: (text: string) => void }): SpeechRecognitionInstance | null {
+  const Constructor = getSpeechRecognitionConstructor();
+  if (!Constructor) return null;
+  const recognition = new Constructor();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = navigator.language || "zh-CN";
+  recognition.onend = onEnd;
+  recognition.onerror = onEnd;
+  recognition.onresult = (event) => {
+    const text = Array.from(event.results)
+      .map((result) => result[0]?.transcript ?? "")
+      .join("")
+      .trim();
+    if (text) onResult(text);
+  };
+  return recognition;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    throw new Error(await hermesErrorMessage(response));
+  }
   return (await response.json()) as T;
 }
 
@@ -1808,6 +3041,35 @@ function formatDateTime(value?: string): string {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatPublishedDate(value?: string): string {
+  if (!value) return "未记录时间";
+  return new Intl.DateTimeFormat("zh-Hans", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatCompactNumber(value?: number): string {
+  if (value === undefined || !Number.isFinite(value)) return "0";
+  if (value >= 10000) return `${(value / 10000).toFixed(value >= 100000 ? 0 : 1)}w`;
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+  return String(value);
+}
+
+function publishedStatusState(status: XhsPublishedPostStatus): "ok" | "warn" | "bad" {
+  if (status === "needs-review") return "bad";
+  if (status === "monitoring" || status === "archived") return "warn";
+  return "ok";
+}
+
+function publishedCardAspect(index: number, post: XhsPublishedPost): string {
+  if (post.contentType === "video") return "3 / 4";
+  if (!post.coverUrl) return index % 3 === 0 ? "4 / 5" : "1 / 1";
+  return index % 5 === 0 ? "4 / 5" : index % 4 === 0 ? "1 / 1" : "3 / 4";
 }
 
 function formatCalendarDay(value: Date): string {

@@ -15,6 +15,7 @@ import type { AppConfig } from "./config";
 
 const TEXT_LIMIT_BYTES = 1024 * 1024;
 const PREVIEW_MIME_TYPES = new Set<ArtifactInfo["mime"]>(["image", "video"]);
+const INTERNAL_WORKSPACE_DIRS = new Set(["migrations", "published-posts"]);
 
 export function ensureGrowthRoot(config: AppConfig): void {
   mkdirSync(config.growthRoot, { recursive: true });
@@ -55,7 +56,7 @@ export function listWorkspaces(config: AppConfig): WorkspaceProfile[] {
   ensureGrowthRoot(config);
   const platforms = safeReaddir(config.growthRoot).filter((entry) => {
     const path = join(config.growthRoot, entry);
-    return safeStat(path)?.isDirectory() && entry !== "migrations";
+    return safeStat(path)?.isDirectory() && !INTERNAL_WORKSPACE_DIRS.has(entry);
   });
 
   const profiles: WorkspaceProfile[] = [];

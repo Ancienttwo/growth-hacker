@@ -13,6 +13,8 @@ function fixtureConfig(): AppConfig {
   return {
     growthRoot: join(root, ".growth"),
     hermesHome: join(root, ".hermes"),
+    hermesApiBaseUrl: "http://127.0.0.1:8642",
+    hermesApiKey: "",
     defaultHermesProfile: "growth-agent",
     socialAgents: [{ id: "growth-agent", runner: "local" }],
     socialCronAgents: ["growth-agent"],

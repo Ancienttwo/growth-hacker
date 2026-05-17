@@ -14,6 +14,8 @@ function config(agents = ["growth-agent"]): AppConfig {
   return {
     growthRoot: join(root, ".growth"),
     hermesHome: join(root, ".hermes"),
+    hermesApiBaseUrl: "http://127.0.0.1:8642",
+    hermesApiKey: "",
     defaultHermesProfile: "growth-agent",
     socialAgents: agents.map((id) => ({ id, runner: "local" })),
     socialCronAgents: agents,
