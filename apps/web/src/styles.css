@@ -2294,6 +2294,14 @@ pre {
   white-space: nowrap;
 }
 
+.chat-attachment-thumb {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
 .chat-attachment-pill button {
   display: grid;
   width: 18px;

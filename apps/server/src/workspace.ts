@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import {
   type ArtifactContent,
@@ -18,7 +19,14 @@ import {
 import type { AppConfig } from "./config";
 
 const TEXT_LIMIT_BYTES = 1024 * 1024;
+const CHAT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const PREVIEW_MIME_TYPES = new Set<ArtifactInfo["mime"]>(["image", "video"]);
+const CHAT_UPLOAD_IMAGE_EXTENSIONS = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/gif", "gif"],
+  ["image/webp", "webp"]
+]);
 const INTERNAL_WORKSPACE_DIRS = new Set(["migrations", "published-posts", "social-board", "social-cron", "vault"]);
 const XHS_TEMPLATE_MAP = new Map([
   ["client-brief.md", "01-client-brief.md"],
@@ -183,6 +191,45 @@ export function readVaultArtifact(config: AppConfig, artifactPath: string): Arti
   return { artifact: info, content: readFileSync(target, "utf8") };
 }
 
+export async function persistChatUpload(
+  config: AppConfig,
+  file: File,
+  options: { platform?: string; profile?: string } = {}
+): Promise<{ artifact: ArtifactInfo; absolutePath: string }> {
+  const contentType = normalizeChatUploadImageType(file);
+  if (!contentType) throw new Error("unsupported_chat_upload_type");
+  if (file.size > CHAT_UPLOAD_MAX_BYTES) throw new Error("chat_upload_too_large");
+
+  const hasWorkspace = Boolean(options.platform && options.profile);
+  const root = hasWorkspace ? profileRoot(config, options.platform!, options.profile!) : vaultRoot(config);
+  assertAllowedPath(config, root);
+  mkdirSync(root, { recursive: true });
+
+  const date = new Date().toISOString().slice(0, 10);
+  const extension = CHAT_UPLOAD_IMAGE_EXTENSIONS.get(contentType) ?? "png";
+  const safeName = safeUploadName(file.name || `pasted-image.${extension}`, extension);
+  const relativePath = join("artifacts", "chat-uploads", date, `${uploadTimestamp()}-${randomUUID().slice(0, 8)}-${safeName}`);
+  const target = resolve(root, relativePath);
+  assertInside(root, target);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, new Uint8Array(await file.arrayBuffer()));
+
+  const stat = statSync(target);
+  return {
+    artifact: {
+      platform: hasWorkspace ? options.platform! : VAULT_WORKSPACE_PLATFORM,
+      profile: hasWorkspace ? options.profile! : VAULT_WORKSPACE_PROFILE,
+      path: relative(root, target),
+      name: basename(target),
+      kind: "file",
+      mime: "image",
+      size: stat.size,
+      updatedAt: stat.mtime.toISOString()
+    },
+    absolutePath: target
+  };
+}
+
 export function resolveArtifact(config: AppConfig, platform: string, profile: string, artifactPath: string): { info: ArtifactInfo; target: string } {
   const root = profileRoot(config, platform, profile);
   assertAllowedPath(config, root);
@@ -269,6 +316,30 @@ export function assertSafeSegment(value: string, label: string): void {
   if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
     throw new Error(`Invalid ${label}: ${value}`);
   }
+}
+
+function normalizeChatUploadImageType(file: File): string | undefined {
+  const type = file.type.toLowerCase();
+  if (CHAT_UPLOAD_IMAGE_EXTENSIONS.has(type)) return type;
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return undefined;
+}
+
+function safeUploadName(name: string, extension: string): string {
+  const stem = basename(name)
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${stem || "pasted-image"}.${extension}`;
+}
+
+function uploadTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function walk(root: string, visit: (path: string) => void, depth = 0): void {

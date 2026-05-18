@@ -89,13 +89,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { buildHermesChatInputFromTranscript, shouldSendChatOnKeyDown } from "@/chatInput";
+import {
+  buildHermesChatInputFromTranscript,
+  isImageChatAttachmentFile,
+  isSupportedChatAttachmentFile,
+  shouldSendChatOnKeyDown
+} from "@/chatInput";
 import { resolveChatMarkdownImageUrl } from "@/chatMarkdown";
 import { findRunMissingTerminalEvent, hasTerminalEventForRun, isStatusPollTimeoutEvent, isTerminalRunEvent } from "@/chatRunStatus";
 import { buildSkillInstructions, resolveAutomaticSkillHints } from "@/chatSkillInstructions";
 import { toolTranscriptSummary } from "@/chatToolSummary";
 import { appendVisualAssetContext, buildVisualAssetInstructions, resolveReusableVisualAssets } from "@/chatVisualAssets";
 import { buildVaultAttachmentContent, buildVaultWorkspaceChatMessage } from "@/chatVaultPrompt";
+import { buildCalendarWeekItems } from "@/calendarWeekItems";
 import { intlLocale, languageLabel, speechLocale, useI18n, type I18nKey, type I18nLocale, type TFunction } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -312,6 +318,17 @@ interface ChatAttachment {
   mime: string;
   size: number;
   content: string;
+  kind?: "text" | "image";
+  path?: string;
+  absolutePath?: string;
+  previewUrl?: string;
+}
+
+interface ChatAttachmentUploadResponse {
+  attachment: {
+    artifact: ArtifactInfo;
+    absolutePath: string;
+  };
 }
 
 interface ChatSession {
@@ -1373,23 +1390,19 @@ export function App() {
   async function attachChatFiles(files: FileList | null) {
     const candidates = Array.from(files ?? []);
     if (!candidates.length) return;
-    const accepted = candidates.filter(isSupportedChatAttachment);
-    const rejected = candidates.filter((file) => !isSupportedChatAttachment(file));
+    const accepted = candidates.filter(isSupportedChatAttachmentFile);
+    const rejected = candidates.filter((file) => !isSupportedChatAttachmentFile(file));
     if (rejected.length) {
       setChatComposerNotice(t("notice.rejectedAttachments", { count: rejected.length }));
     } else {
       setChatComposerNotice(null);
     }
-    const nextAttachments = await Promise.all(
-      accepted.map(async (file) => ({
-        id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-        name: file.name,
-        mime: file.type || "text/plain",
-        size: file.size,
-        content: truncateAttachmentContent(await file.text())
-      }))
-    );
-    setChatAttachments((current) => [...current, ...nextAttachments]);
+    try {
+      const nextAttachments = await Promise.all(accepted.map((file) => buildChatAttachment(file, selectedProfile)));
+      setChatAttachments((current) => [...current, ...nextAttachments]);
+    } catch (error) {
+      setChatComposerNotice(error instanceof Error ? error.message : "attach_chat_file_failed");
+    }
   }
 
   function removeChatAttachment(id: string) {
@@ -4087,6 +4100,12 @@ function ChatView({
                   onSend();
                 }
               }}
+              onPaste={(event) => {
+                const clipboardFiles = event.clipboardData.files;
+                if (activeRunId || !Array.from(clipboardFiles).some(isSupportedChatAttachmentFile)) return;
+                event.preventDefault();
+                onAttachFiles(clipboardFiles);
+              }}
               placeholder={composerMode === "image" ? t("chat.placeholderImage") : t("chat.placeholderMessage")}
               value={visibleDraft}
             />
@@ -4094,7 +4113,13 @@ function ChatView({
               <div className="chat-attachments">
                 {attachments.map((attachment) => (
                   <span className="chat-attachment-pill" key={attachment.id}>
-                    <FileText className="size-3.5" />
+                    {attachment.kind === "image" && attachment.previewUrl ? (
+                      <img alt="" className="chat-attachment-thumb" src={attachment.previewUrl} />
+                    ) : attachment.kind === "image" ? (
+                      <ImageIcon className="size-3.5" />
+                    ) : (
+                      <FileText className="size-3.5" />
+                    )}
                     <span>{attachment.name}</span>
                     <button aria-label={t("chat.removeAttachment", { name: attachment.name })} onClick={() => onRemoveAttachment(attachment.id)} type="button">
                       <Trash2 className="size-3" />
@@ -4107,7 +4132,7 @@ function ChatView({
           </div>
           <div className="chat-composer-controls">
             <input
-              accept=".txt,.md,.markdown,.json,.csv,text/*,application/json"
+              accept=".txt,.md,.markdown,.json,.csv,.png,.jpg,.jpeg,.gif,.webp,text/*,application/json,image/png,image/jpeg,image/gif,image/webp"
               className="sr-only"
               multiple
               onChange={(event) => {
@@ -6048,9 +6073,53 @@ function normalizeChatPermissionMode(value: string): ChatPermissionMode {
   return value === "full_access" || value === "ask" || value === "read_only" ? value : "ask";
 }
 
-function isSupportedChatAttachment(file: File): boolean {
-  if (file.type.startsWith("text/")) return true;
-  return /\.(txt|md|markdown|json|csv|log|yaml|yml)$/i.test(file.name) || file.type === "application/json";
+async function buildChatAttachment(file: File, workspace: WorkspaceProfile | null): Promise<ChatAttachment> {
+  if (isImageChatAttachmentFile(file)) return await uploadChatImageAttachment(file, workspace);
+  const content = truncateAttachmentContent(await file.text());
+  return {
+    id: chatAttachmentId(file),
+    name: file.name,
+    mime: file.type || "text/plain",
+    size: file.size,
+    content,
+    kind: "text"
+  };
+}
+
+async function uploadChatImageAttachment(file: File, workspace: WorkspaceProfile | null): Promise<ChatAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  if (workspace) {
+    form.append("platform", workspace.platform);
+    form.append("profile", workspace.profile);
+  }
+  const payload = await api<ChatAttachmentUploadResponse>("/api/chat/attachments", {
+    method: "POST",
+    body: form
+  });
+  const artifact = payload.attachment.artifact;
+  const previewUrl = artifactRawUrl(artifact.platform, artifact.profile, artifact.path);
+  return {
+    id: chatAttachmentId(file, artifact.path),
+    name: file.name || artifact.name,
+    mime: file.type || "image/*",
+    size: artifact.size || file.size,
+    content: imageAttachmentPromptContent({
+      absolutePath: payload.attachment.absolutePath,
+      mime: file.type || "image/*",
+      path: artifact.path,
+      previewUrl,
+      size: artifact.size || file.size
+    }),
+    kind: "image",
+    path: artifact.path,
+    absolutePath: payload.attachment.absolutePath,
+    previewUrl
+  };
+}
+
+function chatAttachmentId(file: File, seed = ""): string {
+  return `${file.name}-${file.size}-${file.lastModified}-${seed}-${Math.random().toString(36).slice(2)}`;
 }
 
 function truncateAttachmentContent(content: string): string {
@@ -6074,18 +6143,30 @@ function buildHermesContextAttachmentContent(context: HermesContextSnapshot): st
 }
 
 function summarizeAttachments(attachments: ChatAttachment[]): string {
-  return attachments.map((attachment) => `[attachment] ${attachment.name}`).join("\n");
+  return attachments.map((attachment) => `[${attachment.kind === "image" ? "image" : "attachment"}] ${attachment.name}`).join("\n");
 }
 
 function buildChatMessageWithAttachments(message: string, attachments: ChatAttachment[]): string {
   if (!attachments.length) return message;
-  const rendered = attachments
-    .map(
-      (attachment) =>
-        `### ${attachment.name}\n\n- MIME: ${attachment.mime || "text/plain"}\n- Size: ${formatBytes(attachment.size)}\n\n${attachment.content}`
-    )
-    .join("\n\n");
+  const rendered = attachments.map(renderChatAttachment).join("\n\n");
   return [message, "Attached local context:", rendered].filter(Boolean).join("\n\n");
+}
+
+function renderChatAttachment(attachment: ChatAttachment): string {
+  return [`### ${attachment.name}`, "", `- MIME: ${attachment.mime || "text/plain"}`, `- Size: ${formatBytes(attachment.size)}`, "", attachment.content]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function imageAttachmentPromptContent(attachment: { absolutePath: string; mime: string; path: string; previewUrl: string; size: number }): string {
+  return [
+    "- Type: pasted image",
+    `- Local path: ${attachment.absolutePath}`,
+    `- Workspace path: ${attachment.path}`,
+    `- Preview URL: ${attachment.previewUrl}`,
+    "",
+    "Use this pasted image as the user-provided visual input. If inspection is needed, read the local path above."
+  ].join("\n");
 }
 
 function buildImageGenerationChatMessage(message: string, attachments: ChatAttachment[]): string {
@@ -6098,7 +6179,8 @@ function buildImageGenerationChatMessage(message: string, attachments: ChatAttac
     "Create exactly one image unless the user explicitly asks for multiple images.",
     "Use aspect_ratio `square` unless the prompt clearly asks for `landscape` or `portrait`.",
     "After the skill/tool returns, show the generated or reused result in chat as Markdown image syntax and include the concrete URL/path returned by the skill/tool.",
-    "The dashboard persists returned Hermes image files into the selected workspace under `artifacts/images/`; do not invent that artifact path.",
+    "For generic image runs, the dashboard persists returned Hermes image files into the selected workspace under `artifacts/images/`; do not invent that generic artifact path.",
+    "For Xiaohongshu publish covers, follow the profile SOP when present and copy/save the final selected image to `assets/<YYYY-MM-DD-topic-slug>/cover.png`.",
     "",
     "Prompt:",
     prompt
@@ -6293,57 +6375,6 @@ function resolveDefaultCalendarWeekStart(items: SocialTaskCalendarItem[], jobs: 
 
   const firstDate = candidateDates.sort((a, b) => a.getTime() - b.getTime())[0];
   return startOfWeek(firstDate);
-}
-
-function buildCalendarWeekItems(items: SocialTaskCalendarItem[], jobs: SocialCronJob[], weekStart: Date): SocialTaskCalendarItem[] {
-  const weekEnd = addDays(weekStart, 7);
-  const storedCronItems = new Map(items.filter((item) => item.source === "cron").map((item) => [item.id, item]));
-  const projectedDailyCronIds = new Set(
-    jobs.filter((job) => job.enabled && job.schedule.kind === "daily" && Boolean(job.schedule.time)).map((job) => job.id)
-  );
-  const storedItems = items.filter((item) => {
-    const startsAt = new Date(item.startsAt);
-    if (!isDateInRange(startsAt, weekStart, weekEnd)) return false;
-    return item.source !== "cron" || !projectedDailyCronIds.has(item.id);
-  });
-  const projectedCronItems = jobs.flatMap((job) => projectDailyCronJob(job, weekStart, storedCronItems.get(job.id)?.runner));
-  return [...projectedCronItems, ...storedItems].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-}
-
-function projectDailyCronJob(job: SocialCronJob, weekStart: Date, runner?: SocialTaskCalendarItem["runner"]): SocialTaskCalendarItem[] {
-  if (!job.enabled || job.schedule.kind !== "daily" || !job.schedule.time) return [];
-
-  const [hour, minute] = job.schedule.time.split(":").map(Number);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return [];
-
-  const createdAt = new Date(job.createdAt);
-  const earliest = Number.isNaN(createdAt.getTime()) ? startOfLocalDay(new Date()) : createdAt;
-  const today = startOfLocalDay(new Date());
-
-  return Array.from({ length: 7 }).flatMap((_, index): SocialTaskCalendarItem[] => {
-    const startsAt = addDays(weekStart, index);
-    startsAt.setHours(hour, minute, 0, 0);
-    if (startsAt < earliest || startsAt < today) return [];
-    const status: SocialTaskCalendarItem["status"] =
-      job.state === "running" || job.state === "failed" || job.state === "paused" ? job.state : "scheduled";
-    return [
-      {
-        id: `${job.id}:${startsAt.toISOString().slice(0, 10)}`,
-        source: "cron",
-        cronSource: job.source ?? "growth",
-        readOnly: job.readOnly,
-        title: job.name,
-        startsAt: startsAt.toISOString(),
-        agentId: job.agentId,
-        runner: runner ?? (job.source === "hermes" ? "hermes" : "local"),
-        llm: job.llm,
-        platform: job.platform,
-        profile: job.profile,
-        taskType: job.taskType,
-        status
-      }
-    ];
-  });
 }
 
 function isDateInRange(value: Date, start: Date, end: Date): boolean {

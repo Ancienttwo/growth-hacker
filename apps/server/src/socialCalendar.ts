@@ -11,6 +11,7 @@ export function listSocialTaskCalendar(config: AppConfig): SocialTaskCalendarIte
     .map((job) => ({
       id: job.id,
       source: "cron",
+      sourceId: job.id,
       cronSource: job.source ?? "growth",
       readOnly: job.readOnly,
       title: job.name,
@@ -29,6 +30,7 @@ export function listSocialTaskCalendar(config: AppConfig): SocialTaskCalendarIte
     .map((task) => ({
       id: task.id,
       source: "board",
+      sourceId: task.sourceId,
       cronSource: task.cronSource,
       readOnly: task.readOnly,
       title: task.title,

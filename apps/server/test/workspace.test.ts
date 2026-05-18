@@ -11,6 +11,7 @@ import {
   listArtifacts,
   listVaultArtifacts,
   listWorkspaces,
+  persistChatUpload,
   readArtifact,
   readVaultArtifact
 } from "../src/workspace";
@@ -64,6 +65,24 @@ describe("workspace artifact access", () => {
     expect(readArtifact(appConfig, "xiaohongshu", "astrozi", "clip.mp4").binary).toBe(true);
     expect(artifactContentType("cover.png")).toBe("image/png");
     expect(artifactContentType("clip.mp4")).toBe("video/mp4");
+  });
+
+  test("persists pasted chat images under profile artifacts", async () => {
+    const appConfig = config();
+    const upload = await persistChatUpload(appConfig, new File(["png-bytes"], "Screenshot 1.png", { type: "image/png" }), {
+      platform: "xiaohongshu",
+      profile: "astrozi"
+    });
+
+    expect(upload.artifact).toMatchObject({
+      platform: "xiaohongshu",
+      profile: "astrozi",
+      kind: "file",
+      mime: "image"
+    });
+    expect(upload.artifact.path.startsWith("artifacts/chat-uploads/")).toBe(true);
+    expect(upload.artifact.path.endsWith("-Screenshot-1.png")).toBe(true);
+    expect(readFileSync(upload.absolutePath, "utf8")).toBe("png-bytes");
   });
 
   test("does not expose internal stores as workspace platforms", () => {

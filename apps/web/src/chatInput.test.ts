@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildHermesChatInputFromTranscript, shouldSendChatOnKeyDown } from "./chatInput";
+import {
+  buildHermesChatInputFromTranscript,
+  isImageChatAttachmentFile,
+  isSupportedChatAttachmentFile,
+  shouldSendChatOnKeyDown
+} from "./chatInput";
 
 describe("Hermes chat input", () => {
   test("replays hidden agent payloads for imported documents", () => {
@@ -71,5 +76,22 @@ describe("chat composer shortcuts", () => {
 
   test("ignores non-Enter keys", () => {
     expect(shouldSendChatOnKeyDown({ key: "a" })).toBe(false);
+  });
+});
+
+describe("chat attachment file support", () => {
+  test("accepts text context files", () => {
+    expect(isSupportedChatAttachmentFile({ name: "brief.md", type: "" })).toBe(true);
+    expect(isSupportedChatAttachmentFile({ name: "metrics.csv", type: "text/csv" })).toBe(true);
+    expect(isSupportedChatAttachmentFile({ name: "config.json", type: "application/json" })).toBe(true);
+  });
+
+  test("accepts browser-pasted image files", () => {
+    expect(isImageChatAttachmentFile({ name: "image.png", type: "image/png" })).toBe(true);
+    expect(isSupportedChatAttachmentFile({ name: "screenshot.webp", type: "" })).toBe(true);
+  });
+
+  test("rejects unsupported binary attachments", () => {
+    expect(isSupportedChatAttachmentFile({ name: "archive.zip", type: "application/zip" })).toBe(false);
   });
 });

@@ -31,6 +31,11 @@ describe("vault chat prompt", () => {
     expect(prompt).toContain("The visible preview is navigation context only.");
     expect(prompt).toContain("For a new topic, create a new dated artifact/folder using today's date.");
     expect(prompt).toContain("If the topic differs from the visible preview or referenced note, create a separate Markdown file.");
+    expect(prompt).toContain("<profile>/xiaohongshu/sop/publish-note-with-cover.md");
+    expect(prompt).toContain("text drafting and cover production are separate steps");
+    expect(prompt).toContain("scan `assets/<YYYY-MM-DD-topic-slug>/cover.png`");
+    expect(prompt).toContain("baoyu-infographic");
+    expect(prompt).toContain("Internal notes such as lessons, metrics, evidence, strategy, or growth-signal analysis do not require cover images");
     expect(prompt).not.toContain("Current preview content");
     expect(prompt).not.toContain("旧题正文");
   });

@@ -58,6 +58,7 @@ import {
   isPreviewableArtifact,
   listArtifacts,
   listVaultArtifacts,
+  persistChatUpload,
   listWorkspaces,
   readArtifact,
   readManifest,
@@ -194,6 +195,20 @@ export function createApp() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "hermes_image_unavailable";
       return c.json({ error: message }, message === "hermes_image_not_found" ? 404 : 400);
+    }
+  });
+
+  app.post("/api/chat/attachments", async (c) => {
+    try {
+      const body = await c.req.parseBody();
+      const file = body.file;
+      if (!(file instanceof File)) throw new Error("file_required");
+      const platform = optionalFormString(body.platform);
+      const profile = optionalFormString(body.profile);
+      if (Boolean(platform) !== Boolean(profile)) throw new Error("workspace_required");
+      return c.json({ attachment: await persistChatUpload(config, file, { platform, profile }) }, 201);
+    } catch (error) {
+      return chatErrorResponse(error, "upload_chat_attachment_failed");
     }
   });
 
@@ -634,6 +649,10 @@ function chatErrorResponse(error: unknown, fallbackMessage: string): Response {
 function requireBodyString(value: unknown, field: string): string {
   if (typeof value === "string" && value.trim()) return value;
   throw new Error(`${field}_required`);
+}
+
+function optionalFormString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function parseQueryInteger(value: string | undefined): number | undefined {

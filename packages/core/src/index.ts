@@ -400,6 +400,7 @@ export interface SocialBoardTask {
 export interface SocialTaskCalendarItem {
   id: string;
   source: "cron" | "board";
+  sourceId?: string;
   cronSource?: SocialCronSource;
   readOnly?: boolean;
   title: string;

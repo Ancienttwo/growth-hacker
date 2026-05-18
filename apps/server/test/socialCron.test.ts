@@ -248,6 +248,7 @@ describe("social cron jobs", () => {
       readOnly: true,
       agentId: "growth-agent",
       runner: "hermes",
+      sourceId: "hermes:c6333b595e58",
       status: "done"
     });
   });
