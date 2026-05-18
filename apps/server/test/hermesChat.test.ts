@@ -49,6 +49,7 @@ describe("Hermes chat proxy", () => {
         input: [{ role: "user", content: "$think 给一个方案" }],
         instructions: "Use $think.",
         model: "gpt-5.4",
+        provider: "openrouter",
         permissionMode: "ask",
         reasoningEffort: "high",
         sessionId: "ui-session"
@@ -66,11 +67,13 @@ describe("Hermes chat proxy", () => {
       expect(requestBody).toMatchObject({
         input: [{ role: "user", content: "$think 给一个方案" }],
         model: "gpt-5.4",
+        provider: "openrouter",
         permission_mode: "ask",
         reasoning_effort: "high",
         session_id: "growth-hacker:growth-agent:ui-session",
         metadata: {
           agent_id: "growth-agent",
+          provider: "openrouter",
           permission_mode: "ask",
           reasoning_effort: "high"
         }
@@ -107,6 +110,7 @@ describe("Hermes chat proxy", () => {
         createHermesChatRun(config(), {
           agentId: "growth-agent",
           input: "hello",
+          provider: "openrouter\nAuthorization: Bearer leaked",
           model: "gpt-5.4\nAuthorization: Bearer leaked",
           permissionMode: "auto-approve-everything",
           reasoningEffort: "infinite",

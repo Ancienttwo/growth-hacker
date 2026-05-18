@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { HermesLlmSelection, JobSnapshot, SocialBoardTask, SocialBoardTaskStatus, SocialCronTaskType } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { listHermesSocialCronRunTasks } from "./hermesCron";
 import type { JobStore } from "./jobs";
 import { buildSocialTaskCommand } from "./socialTaskCommands";
 
@@ -39,7 +40,7 @@ export function listSocialAgents(config: AppConfig) {
 }
 
 export function listSocialBoardTasks(config: AppConfig): SocialBoardTask[] {
-  return readStore(config).tasks.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...readStore(config).tasks, ...listHermesSocialCronRunTasks(config)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function createSocialBoardTask(config: AppConfig, input: CreateSocialBoardTaskInput): SocialBoardTask {

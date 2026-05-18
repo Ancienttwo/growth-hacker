@@ -373,6 +373,13 @@ export interface SocialBoardTask {
   boardId: "social-media";
   agentId: string;
   runner: AgentRunnerKind;
+  cronSource?: SocialCronSource;
+  readOnly?: boolean;
+  sourceOutputPath?: string;
+  sourceMtimeMs?: number;
+  hermesSessionId?: string;
+  hermesSessionPath?: string;
+  syncedAt?: string;
   llm?: HermesLlmSelection;
   platform: string;
   profile: string;

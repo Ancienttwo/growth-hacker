@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,13 +66,13 @@ if (command === "--version") {
 }
 
 describe("XHS auto replies", () => {
-  test("defaults to China Simplified and draft-only mode", () => {
+  test("defaults to China Simplified and send-reply mode", () => {
     const appConfig = config();
     createProfile(appConfig);
 
     expect(listXhsAutoReplies(appConfig, "astrozi").settings).toMatchObject({
       locale: "zh-CN",
-      dryRun: true,
+      dryRun: false,
       maxRepliesPerRun: 10,
       delaySeconds: 12
     });
@@ -121,6 +121,50 @@ describe("XHS auto replies", () => {
         replyContent: "适合新手，先从这篇的例子看就行。"
       });
       expect(hermesRequestBody).toContain("香港繁中");
+    } finally {
+      process.env.PATH = originalPath;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("sends agent-generated replies by default", async () => {
+    const appConfig = config();
+    createProfile(appConfig);
+    const logPath = join(tmpdir(), `growth-hacker-xhs-reply-${crypto.randomUUID()}.log`);
+    const fakeBin = installFakeXhs(logPath);
+    const originalPath = process.env.PATH;
+    const originalFetch = globalThis.fetch;
+    process.env.PATH = `${fakeBin}:${originalPath ?? ""}`;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/runs")) {
+        return Response.json({ run_id: "run_abcd12", status: "queued" });
+      }
+      return Response.json({
+        run_id: "run_abcd12",
+        status: "completed",
+        output: JSON.stringify({
+          decisions: [{ commentId: "comment-1", action: "reply", content: "适合新手，先看这篇例子就行。", reason: "genuine_question" }]
+        })
+      });
+    }) as typeof fetch;
+
+    try {
+      updateXhsAutoReplySettings(appConfig, "astrozi", {
+        stylePrompt: "短句，真诚，不引导私信。"
+      });
+
+      const result = await runXhsAutoReplyBatch(appConfig, "astrozi", "growth-agent", { runId: "send-run" });
+      const queue = listXhsAutoReplies(appConfig, "astrozi");
+
+      expect(result).toMatchObject({ dryRun: false, scanned: 1, replied: 1, drafted: 0, failed: 0 });
+      expect(queue.items[0]).toMatchObject({
+        commentId: "comment-1",
+        status: "sent",
+        replyContent: "适合新手，先看这篇例子就行。"
+      });
+      expect(existsSync(logPath)).toBe(true);
+      expect(readFileSync(logPath, "utf8")).toContain("reply https://www.xiaohongshu.com/explore/note-1 --comment-id comment-1");
     } finally {
       process.env.PATH = originalPath;
       globalThis.fetch = originalFetch;

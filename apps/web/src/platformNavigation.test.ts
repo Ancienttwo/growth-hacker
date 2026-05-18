@@ -31,7 +31,6 @@ describe("platform navigation", () => {
       "chat",
       "hermes",
       "skills",
-      "jobs",
       "setup"
     ]);
     expect(visibleDashboardViews(socialPlatformInfo(platforms, "facebook"))).toEqual([
@@ -42,7 +41,6 @@ describe("platform navigation", () => {
       "chat",
       "hermes",
       "skills",
-      "jobs",
       "setup"
     ]);
   });

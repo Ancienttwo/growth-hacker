@@ -89,9 +89,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { buildHermesChatInputFromTranscript } from "@/chatInput";
+import { buildHermesChatInputFromTranscript, shouldSendChatOnKeyDown } from "@/chatInput";
 import { resolveChatMarkdownImageUrl } from "@/chatMarkdown";
 import { findRunMissingTerminalEvent, hasTerminalEventForRun, isStatusPollTimeoutEvent, isTerminalRunEvent } from "@/chatRunStatus";
+import { buildSkillInstructions, resolveAutomaticSkillHints } from "@/chatSkillInstructions";
+import { toolTranscriptSummary } from "@/chatToolSummary";
+import { appendVisualAssetContext, buildVisualAssetInstructions, resolveReusableVisualAssets } from "@/chatVisualAssets";
+import { buildVaultAttachmentContent, buildVaultWorkspaceChatMessage } from "@/chatVaultPrompt";
 import { intlLocale, languageLabel, speechLocale, useI18n, type I18nKey, type I18nLocale, type TFunction } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -107,6 +111,7 @@ import {
   visibleDashboardViews
 } from "@/platformNavigation";
 import type { DashboardView } from "@/platformNavigation";
+import { shouldShowSocialBoardTask } from "@/socialBoardFilters";
 
 interface WorkspacesResponse {
   profiles: WorkspaceProfile[];
@@ -243,8 +248,10 @@ interface PersistHermesRunArtifactsResponse {
 
 interface HermesChatRunOptions {
   agentId: string;
+  hermesSessionId?: string;
   instructions?: string;
   model: string;
+  provider: string;
   permissionMode: ChatPermissionMode;
   reasoningEffort: ChatReasoningEffort;
 }
@@ -288,6 +295,7 @@ interface HermesChatEvent {
   agentId?: string;
   agentMessage?: string;
   model?: string;
+  provider?: string;
   permissionMode?: string;
   reasoningEffort?: string;
   sessionId?: string;
@@ -321,6 +329,20 @@ interface ChatSession {
 interface ChatSessionState {
   sessions: ChatSession[];
   activeId: string;
+}
+
+interface QueuedChatSteer {
+  id: string;
+  sessionId: string;
+  visibleUserMessage: string;
+  outgoingMessage: string;
+  agentId: string;
+  instructions?: string;
+  model: string;
+  provider: string;
+  permissionMode: ChatPermissionMode;
+  reasoningEffort: ChatReasoningEffort;
+  runProfile: WorkspaceProfile | null;
 }
 
 type ChatEventsUpdate = HermesChatEvent[] | ((current: HermesChatEvent[]) => HermesChatEvent[]);
@@ -419,7 +441,7 @@ const autoReplyStylePresets: Array<{ id: string; labelKey: I18nKey; descriptionK
 const defaultAutoReplySettings: XhsAutoReplySettings = {
   stylePrompt: "",
   locale: "zh-CN",
-  dryRun: true,
+  dryRun: false,
   maxRepliesPerRun: 10,
   delaySeconds: 12
 };
@@ -497,11 +519,14 @@ const dashboardNavById: Record<DashboardView, { id: DashboardView; labelKey: I18
   chat: { id: "chat", labelKey: "nav.chat", icon: MessageSquare },
   hermes: { id: "hermes", labelKey: "nav.hermes", icon: Activity },
   skills: { id: "skills", labelKey: "nav.skills", icon: Gauge },
-  jobs: { id: "jobs", labelKey: "nav.jobs", icon: Terminal },
   setup: { id: "setup", labelKey: "nav.setup", icon: KeyRound }
 };
 
-const defaultChatModel = localStorage.getItem("growth-hacker.chatModel") ?? "gpt-5.5";
+const defaultChatLlmValue =
+  localStorage.getItem("growth-hacker.chatLlm") ??
+  (localStorage.getItem("growth-hacker.chatModel")
+    ? hermesLlmValue({ provider: "openai-codex", model: localStorage.getItem("growth-hacker.chatModel") ?? "gpt-5.5" })
+    : hermesLlmValue(fallbackHermesModelOptions.current ?? { provider: "openai-codex", model: "gpt-5.5" }));
 const defaultChatReasoningEffort = normalizeChatReasoningEffort(localStorage.getItem("growth-hacker.chatReasoningEffort") ?? "xhigh");
 const defaultChatPermissionMode = normalizeChatPermissionMode(localStorage.getItem("growth-hacker.chatPermissionMode") ?? "ask");
 
@@ -535,13 +560,16 @@ export function App() {
   const [hermesSkills, setHermesSkills] = useState<HermesSkillInfo[]>([]);
   const [hermesContext, setHermesContext] = useState<HermesContextSnapshot | null>(null);
   const [chatSessionState, setChatSessionState] = useState<ChatSessionState>(() => loadChatSessionState());
+  const chatSessionStateRef = useRef(chatSessionState);
   const [activeChatRunId, setActiveChatRunId] = useState<string | null>(null);
   const [chatPermissionMode, setChatPermissionMode] = useState<ChatPermissionMode>(defaultChatPermissionMode);
-  const [chatModel, setChatModel] = useState(defaultChatModel);
+  const [chatLlmValue, setChatLlmValue] = useState(defaultChatLlmValue);
   const [chatReasoningEffort, setChatReasoningEffort] = useState<ChatReasoningEffort>(defaultChatReasoningEffort);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [chatComposerNotice, setChatComposerNotice] = useState<string | null>(null);
   const [chatComposerMode, setChatComposerMode] = useState<ChatComposerMode>(null);
+  const [queuedChatSteers, setQueuedChatSteers] = useState<QueuedChatSteer[]>([]);
+  const queuedChatSteersRef = useRef<QueuedChatSteer[]>([]);
   const [socialCronTaskTypes, setSocialCronTaskTypes] = useState<SocialCronTaskType[]>(defaultSocialCronTaskTypes);
   const [socialCronTaskType, setSocialCronTaskType] = useState<SocialCronTaskType>("workspace-diagnosis");
   const [socialCronSchedule, setSocialCronSchedule] = useState("daily 09:00");
@@ -626,6 +654,13 @@ export function App() {
   }, [hermesModelOptions.current?.provider, hermesModelOptions.current?.model, selectedLlmValue]);
 
   useEffect(() => {
+    if (!hermesModelOptions.models.length) return;
+    if (hermesModelOptions.models.some((option) => option.value === chatLlmValue)) return;
+    const nextValue = hermesModelOptions.current ? hermesLlmValue(hermesModelOptions.current) : hermesModelOptions.models[0]?.value;
+    if (nextValue) setChatLlmValue(nextValue);
+  }, [chatLlmValue, hermesModelOptions.current?.provider, hermesModelOptions.current?.model, hermesModelOptions.models]);
+
+  useEffect(() => {
     if (!selectedProfile) {
       setArtifacts([]);
       setSelectedArtifact(null);
@@ -672,8 +707,8 @@ export function App() {
   }, [chatPermissionMode]);
 
   useEffect(() => {
-    localStorage.setItem("growth-hacker.chatModel", chatModel);
-  }, [chatModel]);
+    localStorage.setItem("growth-hacker.chatLlm", chatLlmValue);
+  }, [chatLlmValue]);
 
   useEffect(() => {
     localStorage.setItem("growth-hacker.chatReasoningEffort", chatReasoningEffort);
@@ -703,7 +738,11 @@ export function App() {
     [activePlatformInfo.capabilities.scheduledTasks, socialCronTaskTypes]
   );
   const activeSocialCronJobs = useMemo(() => socialCronJobs.filter((job) => job.platform === activePlatform), [activePlatform, socialCronJobs]);
-  const activeSocialBoardTasks = useMemo(() => socialBoardTasks.filter((task) => task.platform === activePlatform), [activePlatform, socialBoardTasks]);
+  const activeSocialBoardTasks = useMemo(
+    () => socialBoardTasks.filter((task) => task.platform === activePlatform && shouldShowSocialBoardTask(task)),
+    [activePlatform, socialBoardTasks]
+  );
+  const selectedRuntimeJob = selectedJob && !selectedJob.type.startsWith("social-board-") ? selectedJob : null;
   const activeSocialCalendarItems = useMemo(
     () => socialCalendarItems.filter((item) => item.platform === activePlatform),
     [activePlatform, socialCalendarItems]
@@ -721,6 +760,11 @@ export function App() {
   );
   const activeChatSession = chatSessionState.sessions.find((session) => session.id === chatSessionState.activeId) ?? chatSessionState.sessions[0];
   const chatEvents = activeChatSession?.events ?? [];
+  const queuedChatSteerCount = activeChatSession ? queuedChatSteers.filter((steer) => steer.sessionId === activeChatSession.id).length : 0;
+
+  useEffect(() => {
+    chatSessionStateRef.current = chatSessionState;
+  }, [chatSessionState]);
 
   useEffect(() => {
     localStorage.setItem(platformModeStorageKey, activePlatform);
@@ -795,6 +839,9 @@ export function App() {
     socialAgents.find((agent) => agent.id === socialCronAgentId) ??
     socialAgents[0];
   const selectedLlm = hermesLlmFromValue(selectedLlmValue) ?? hermesModelOptions.current;
+  const selectedChatLlm =
+    hermesLlmFromValue(chatLlmValue) ?? hermesModelOptions.current ?? fallbackHermesModelOptions.current ?? { provider: "openai-codex", model: "gpt-5.5" };
+  const chatModel = selectedChatLlm.model;
   const activeNavItem = dashboardNavById[activeView] ?? dashboardNavById.workspace;
   const activeNavLabel = t(activeNavItem.labelKey);
   const topbarTitle =
@@ -870,7 +917,7 @@ export function App() {
   function referenceVaultArtifact(artifactContent = selectedVaultArtifact) {
     if (!artifactContent?.content) return;
     const path = artifactContent.artifact.path;
-    const content = buildVaultAttachmentContent(artifactContent);
+    const content = buildVaultAttachmentContent(artifactContent, vaultWorkspaceRoot);
     const id = `vault:${path}:${artifactContent.artifact.updatedAt ?? ""}`;
     setChatAttachments((current) =>
       current.some((attachment) => attachment.id === id || attachment.name === `vault:${path}`)
@@ -1082,7 +1129,7 @@ export function App() {
         void reloadSocialCron();
       });
       await reloadSocialCron();
-      setActiveView("jobs");
+      setActiveView("board");
     } catch (error) {
       setAutoReplyNotice(error instanceof Error ? error.message : t("autoReply.runFailed"));
     } finally {
@@ -1234,7 +1281,7 @@ export function App() {
       const snapshot = await api<JobSnapshot>(`/api/social-cron/jobs/${encodeURIComponent(job.id)}/run`, { method: "POST" });
       watchJob(snapshot, () => void reloadSocialCron());
       await reloadSocialCron();
-      setActiveView("jobs");
+      setActiveView("board");
     } finally {
       setBusy(null);
     }
@@ -1246,7 +1293,40 @@ export function App() {
       const snapshot = await api<JobSnapshot>(`/api/social-board/tasks/${encodeURIComponent(task.id)}/run`, { method: "POST" });
       watchJob(snapshot, () => void reloadSocialCron());
       await reloadSocialCron();
-      setActiveView("jobs");
+      setActiveView("board");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openSocialBoardTaskSession(task: SocialBoardTask) {
+    if (!task.hermesSessionId || activeChatRunId) return;
+
+    const existing = chatSessionStateRef.current.sessions.find((session) => session.hermesSessionId === task.hermesSessionId);
+    if (existing) {
+      selectChatSession(existing.id, "chat");
+      return;
+    }
+
+    const next = createChatSessionFromSocialBoardTask(task);
+    setBusy(`social-board-session-${task.id}`);
+    commitChatSessionState({
+      activeId: next.id,
+      sessions: [next, ...chatSessionStateRef.current.sessions].slice(0, chatSessionLimit)
+    });
+    setActiveView("chat");
+    setSocialCronAgentId(task.agentId);
+    setChatDraft("");
+    setChatAttachments([]);
+    setChatComposerNotice(null);
+    setChatComposerMode(null);
+
+    try {
+      const created = withActiveChatSession(normalizeChatSessionState(await createChatSessionApi(next)), next.id);
+      commitChatSessionState(created);
+      setActiveView("chat");
+    } catch (error) {
+      setChatComposerNotice(error instanceof Error ? error.message : "create_chat_session_failed");
     } finally {
       setBusy(null);
     }
@@ -1316,6 +1396,12 @@ export function App() {
     setChatAttachments((current) => current.filter((attachment) => attachment.id !== id));
   }
 
+  function commitChatSessionState(nextState: ChatSessionState) {
+    chatSessionStateRef.current = nextState;
+    if (nextState.activeId) localStorage.setItem(activeChatSessionStorageKey, nextState.activeId);
+    setChatSessionState(nextState);
+  }
+
   function updateChatSessionEvents(sessionId: string, update: ChatEventsUpdate, titleHint?: string) {
     setChatSessionState((current) => {
       let touched = false;
@@ -1335,7 +1421,9 @@ export function App() {
         return updatedSession;
       });
       if (!touched) return current;
-      return { ...current, sessions: sortChatSessions(sessions).slice(0, chatSessionLimit) };
+      const nextState = { ...current, sessions: sortChatSessions(sessions).slice(0, chatSessionLimit) };
+      chatSessionStateRef.current = nextState;
+      return nextState;
     });
   }
 
@@ -1356,13 +1444,17 @@ export function App() {
       .catch((error) => setChatComposerNotice(error instanceof Error ? error.message : "create_chat_session_failed"));
   }
 
-  function selectChatSession(sessionId: string) {
+  function selectChatSession(sessionId: string, nextView?: DashboardView) {
     if (activeChatRunId) return;
-    const next = chatSessionState.sessions.find((session) => session.id === sessionId);
+    const state = chatSessionStateRef.current;
+    const next = state.sessions.find((session) => session.id === sessionId);
     if (!next) return;
-    setChatSessionState((current) => ({ ...current, activeId: sessionId }));
-    void activateChatSessionApi(sessionId).catch(() => undefined);
+    commitChatSessionState({ ...state, activeId: sessionId });
+    void activateChatSessionApi(sessionId)
+      .then((serverState) => commitChatSessionState(withActiveChatSession(normalizeChatSessionState(serverState), sessionId)))
+      .catch(() => undefined);
     if (next.agentId) setSocialCronAgentId(next.agentId);
+    if (nextView) setActiveView(nextView);
     setChatDraft("");
     setChatAttachments([]);
     setChatComposerNotice(null);
@@ -1438,69 +1530,126 @@ export function App() {
       .catch((error) => setChatComposerNotice(error instanceof Error ? error.message : "handoff_chat_session_failed"));
   }
 
-  async function sendChatMessage() {
+  function syncQueuedChatSteers(next: QueuedChatSteer[]) {
+    queuedChatSteersRef.current = next;
+    setQueuedChatSteers(next);
+  }
+
+  function enqueueChatSteer(submission: QueuedChatSteer) {
+    const next = [...queuedChatSteersRef.current, submission];
+    syncQueuedChatSteers(next);
+    setChatComposerNotice(t("notice.chatSteerQueued", { count: next.filter((steer) => steer.sessionId === submission.sessionId).length }));
+  }
+
+  function drainQueuedChatSteers(sessionId: string) {
+    const nextSubmission = queuedChatSteersRef.current.find((steer) => steer.sessionId === sessionId);
+    if (!nextSubmission) return;
+    syncQueuedChatSteers(queuedChatSteersRef.current.filter((steer) => steer.id !== nextSubmission.id));
+    void runChatSubmission(nextSubmission);
+  }
+
+  function createChatSubmission(session: ChatSession): QueuedChatSteer | null {
     const message = chatDraft.trim();
-    if ((!message && !chatAttachments.length) || activeChatRunId || !activeChatSession) return;
-    const command = message.toLowerCase();
-    if (!chatAttachments.length && command === "/new") {
-      createChatSessionFromUi();
-      return;
-    }
-    if (!chatAttachments.length && (command === "/handoff" || command === "/compact")) {
-      setChatDraft("");
-      handoffChatSessionFromUi();
-      return;
-    }
+    if (!message && !chatAttachments.length) return null;
     const agentId = selectedSocialAgent?.id ?? socialCronAgentId;
     const runComposerMode = chatComposerMode;
     const skillMentions = resolveSkillMentions(message, hermesSkills);
     if (skillMentions.error) {
-      updateChatSessionEvents(activeChatSession.id, (current) => [
+      updateChatSessionEvents(session.id, (current) => [
         ...current,
         { event: "run.failed", error: skillMentions.error, timestamp: Date.now() / 1000 }
       ]);
-      return;
+      return null;
     }
-    const runPermissionMode = chatPermissionMode;
-    const runProfile = activeView === "knowledge" ? null : selectedProfile;
     const baseOutgoingMessage =
       runComposerMode === "image" ? buildImageGenerationChatMessage(message, chatAttachments) : buildChatMessageWithAttachments(message, chatAttachments);
+    const visualAssets = resolveReusableVisualAssets(baseOutgoingMessage, session.events, artifacts, selectedProfile);
+    const visualMessage = appendVisualAssetContext(baseOutgoingMessage, visualAssets);
     const outgoingMessage =
-      activeView === "knowledge" ? buildVaultWorkspaceChatMessage(baseOutgoingMessage, selectedVaultArtifact) : baseOutgoingMessage;
-    const clientSessionId = activeChatSession.id;
-    const priorChatEvents = activeChatSession.events;
+      activeView === "knowledge"
+        ? buildVaultWorkspaceChatMessage(visualMessage, { artifact: selectedVaultArtifact, vaultRoot: vaultWorkspaceRoot })
+        : visualMessage;
     const visibleUserMessage =
       runComposerMode === "image" ? `Create image: ${message || summarizeAttachments(chatAttachments)}` : message || summarizeAttachments(chatAttachments);
+    const automaticSkills = resolveAutomaticSkillHints(baseOutgoingMessage, hermesSkills, skillMentions.skills);
+    return {
+      id: `steer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      sessionId: session.id,
+      visibleUserMessage,
+      outgoingMessage,
+      agentId,
+      instructions: joinRunInstructions(buildSkillInstructions([...skillMentions.skills, ...automaticSkills]), buildVisualAssetInstructions(visualAssets)),
+      model: chatModel,
+      provider: selectedChatLlm.provider,
+      permissionMode: chatPermissionMode,
+      reasoningEffort: chatReasoningEffort,
+      runProfile: activeView === "knowledge" ? null : selectedProfile
+    };
+  }
+
+  async function sendChatMessage() {
+    if (!activeChatSession) return;
+    const message = chatDraft.trim();
+    if (!message && !chatAttachments.length) return;
+    const command = message.toLowerCase();
+    const chatRunActive = Boolean(activeChatRunId) || busy === "chat-run";
+    if (!chatRunActive && !chatAttachments.length && command === "/new") {
+      createChatSessionFromUi();
+      return;
+    }
+    if (!chatRunActive && !chatAttachments.length && (command === "/handoff" || command === "/compact")) {
+      setChatDraft("");
+      handoffChatSessionFromUi();
+      return;
+    }
+    const submission = createChatSubmission(activeChatSession);
+    if (!submission) return;
     setChatDraft("");
     setChatAttachments([]);
     setChatComposerNotice(null);
     setChatComposerMode(null);
+    if (chatRunActive) {
+      enqueueChatSteer(submission);
+      return;
+    }
+    await runChatSubmission(submission);
+  }
+
+  async function runChatSubmission(submission: QueuedChatSteer) {
+    const clientSessionId = submission.sessionId;
+    const session = chatSessionStateRef.current.sessions.find((candidate) => candidate.id === clientSessionId);
+    if (!session) return;
+    const priorChatEvents = session.events;
     updateChatSessionEvents(
       clientSessionId,
       (current) => [
         ...current,
         {
           event: "message.user",
-          message: visibleUserMessage,
-          agentMessage: outgoingMessage !== visibleUserMessage ? outgoingMessage : undefined,
+          message: submission.visibleUserMessage,
+          agentMessage: submission.outgoingMessage !== submission.visibleUserMessage ? submission.outgoingMessage : undefined,
           timestamp: Date.now() / 1000
         }
       ],
-      deriveChatSessionTitle(visibleUserMessage)
+      deriveChatSessionTitle(submission.visibleUserMessage)
     );
     setBusy("chat-run");
     let runId: string | null = null;
     let receivedTerminalEvent = false;
+    let shouldDrainQueuedSteer = false;
+    let controller: AbortController | null = null;
     try {
       const run = await createHermesChatRun(
-        buildHermesChatInput(priorChatEvents, outgoingMessage),
+        session.hermesSessionId ? submission.outgoingMessage : buildHermesChatInput(priorChatEvents, submission.outgoingMessage),
         clientSessionId,
         {
-          agentId,
-          instructions: buildSkillInstructions(skillMentions.skills),
-          model: chatModel,
-          permissionMode: runPermissionMode,
-          reasoningEffort: chatReasoningEffort
+          agentId: submission.agentId,
+          hermesSessionId: session.hermesSessionId,
+          instructions: submission.instructions,
+          model: submission.model,
+          provider: submission.provider,
+          permissionMode: submission.permissionMode,
+          reasoningEffort: submission.reasoningEffort
         }
       );
       runId = run.runId;
@@ -1508,30 +1657,33 @@ export function App() {
       updateChatSessionEvents(clientSessionId, (current) => [
         ...current,
         buildAgentRuntimeEvent(run, {
-          agentId,
-          model: chatModel,
-          permissionMode: runPermissionMode,
-          reasoningEffort: chatReasoningEffort
+          agentId: submission.agentId,
+          model: submission.model,
+          provider: submission.provider,
+          permissionMode: submission.permissionMode,
+          reasoningEffort: submission.reasoningEffort
         })
       ]);
-      const controller = new AbortController();
-      chatAbortRef.current = controller;
+      const runController = new AbortController();
+      controller = runController;
+      chatAbortRef.current = runController;
       const finishWithTerminalEvent = async (next: HermesChatEvent) => {
         if (receivedTerminalEvent) return;
         receivedTerminalEvent = true;
-        if (next.event === "run.completed") await persistChatRunArtifacts(next.run_id, runProfile);
+        shouldDrainQueuedSteer = true;
+        if (next.event === "run.completed") await persistChatRunArtifacts(next.run_id, submission.runProfile);
         updateChatSessionEvents(clientSessionId, (current) =>
           next.run_id && hasTerminalEventForRun(current, next.run_id) ? current : [...current, next]
         );
         setActiveChatRunId(null);
         setBusy(null);
-        controller.abort();
+        runController.abort();
         void refresh();
         if (activeView === "knowledge") void reloadVaultArtifacts(selectedVaultArtifact?.artifact.path);
       };
       let statusPollError: unknown;
       let eventStreamError: unknown;
-      const statusPoll = waitForHermesRunTerminal(run.runId, controller.signal, (next) => {
+      const statusPoll = waitForHermesRunTerminal(run.runId, runController.signal, (next) => {
         updateChatSessionEvents(clientSessionId, (current) =>
           current.some((event) => event.run_id === next.run_id && isStatusPollTimeoutEvent(event)) ? current : [...current, next]
         );
@@ -1543,21 +1695,21 @@ export function App() {
           if (error instanceof DOMException && error.name === "AbortError") return;
           statusPollError = error;
         });
-      await consumeHermesRunEvents(run.runId, controller.signal, (next) => {
+      await consumeHermesRunEvents(run.runId, runController.signal, (next) => {
         if (isTerminalRunEvent(next)) {
           void finishWithTerminalEvent(next);
           return;
         }
         updateChatSessionEvents(clientSessionId, (current) => [...current, next]);
         if (next.event === "approval.request" && next.run_id) {
-          if (runPermissionMode === "full_access") void approveHermesRun(next.run_id, "session");
-          if (runPermissionMode === "read_only") void approveHermesRun(next.run_id, "deny");
+          if (submission.permissionMode === "full_access") void approveHermesRun(next.run_id, "session");
+          if (submission.permissionMode === "read_only") void approveHermesRun(next.run_id, "deny");
         }
       }).catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError" && receivedTerminalEvent) return;
         eventStreamError = error;
       });
-      if (!receivedTerminalEvent && !controller.signal.aborted) {
+      if (!receivedTerminalEvent && !runController.signal.aborted) {
         await statusPoll;
         if (!receivedTerminalEvent) throw statusPollError ?? eventStreamError;
       }
@@ -1575,7 +1727,8 @@ export function App() {
         setActiveChatRunId((current) => (current === runId ? null : current));
         setBusy((current) => (current === "chat-run" ? null : current));
       }
-      chatAbortRef.current = null;
+      if (!controller || chatAbortRef.current === controller) chatAbortRef.current = null;
+      if (shouldDrainQueuedSteer) drainQueuedChatSteers(clientSessionId);
     }
   }
 
@@ -1821,7 +1974,6 @@ export function App() {
                 skills={hermesSkills}
               />
             ) : null}
-            {activeView === "jobs" ? <JobsSubNav job={selectedJob} /> : null}
             {activeView === "setup" ? <SetupSubNav auth={auth} hermes={hermes} openclaw={openclaw} /> : null}
           </ScrollArea>
         </aside>
@@ -1868,11 +2020,13 @@ export function App() {
                   draft={chatDraft}
                   events={chatEvents}
                   model={chatModel}
+                  modelOptions={hermesModelOptions.models}
+                  modelValue={chatLlmValue}
                   onApprove={(runId, choice) => void approveChatRun(runId, choice)}
                   onAttachFiles={(files) => void attachChatFiles(files)}
                   onComposerModeChange={setChatComposerMode}
                   onDraftChange={setChatDraft}
-                  onModelChange={setChatModel}
+                  onModelChange={setChatLlmValue}
                   onPermissionModeChange={setChatPermissionMode}
                   onReasoningEffortChange={setChatReasoningEffort}
                   onReferenceCurrent={() => referenceVaultArtifact()}
@@ -1880,7 +2034,9 @@ export function App() {
                   onSend={() => void sendChatMessage()}
                   onStop={() => void stopChatRun()}
                   permissionMode={chatPermissionMode}
+                  queuedSteerCount={queuedChatSteerCount}
                   reasoningEffort={chatReasoningEffort}
+                  runPending={busy === "chat-run"}
                   selectedAgent={selectedSocialAgent}
                   selectedArtifact={selectedVaultArtifact}
                   skills={hermesSkills}
@@ -1949,7 +2105,13 @@ export function App() {
               ) : null}
 
               {activeView === "board" ? (
-                <BoardView busy={busy} onRun={(task) => void runSocialBoardTask(task)} tasks={activeSocialBoardTasks} />
+                <BoardView
+                  busy={busy}
+                  onOpenSession={(task) => void openSocialBoardTaskSession(task)}
+                  onRun={(task) => void runSocialBoardTask(task)}
+                  selectedJob={selectedJob}
+                  tasks={activeSocialBoardTasks}
+                />
               ) : null}
 
               {activeView === "chat" ? (
@@ -1961,18 +2123,22 @@ export function App() {
                   draft={chatDraft}
                   events={chatEvents}
                   model={chatModel}
+                  modelOptions={hermesModelOptions.models}
+                  modelValue={chatLlmValue}
                   onAttachFiles={(files) => void attachChatFiles(files)}
                   onApprove={(runId, choice) => void approveChatRun(runId, choice)}
                   onDraftChange={setChatDraft}
                   onComposerModeChange={setChatComposerMode}
-                  onModelChange={setChatModel}
+                  onModelChange={setChatLlmValue}
                   onPermissionModeChange={setChatPermissionMode}
                   onReasoningEffortChange={setChatReasoningEffort}
                   onRemoveAttachment={removeChatAttachment}
                   onSend={() => void sendChatMessage()}
                   onStop={() => void stopChatRun()}
                   permissionMode={chatPermissionMode}
+                  queuedSteerCount={queuedChatSteerCount}
                   reasoningEffort={chatReasoningEffort}
+                  runPending={busy === "chat-run"}
                   selectedAgent={selectedSocialAgent}
                   skills={hermesSkills}
                   status={hermesChatStatus}
@@ -2000,13 +2166,12 @@ export function App() {
                 />
               ) : null}
 
-              {activeView === "jobs" ? <JobsView job={selectedJob} /> : null}
-
               {activeView === "setup" ? (
                 <SetupView
                   auth={auth}
                   busy={busy}
                   hermes={hermes}
+                  job={selectedRuntimeJob}
                   migration={migration}
                   onBootstrap={() => void bootstrap()}
                   onLogin={(mode) => void login(mode)}
@@ -2803,24 +2968,6 @@ function SkillsSubNav({
   );
 }
 
-function JobsSubNav({ job }: { job: JobSnapshot | null }) {
-  const { t } = useI18n();
-  return (
-    <div className="sub-nav-body">
-      <SectionLabel icon={Terminal} label={t("section.latest")} />
-      {job ? (
-        <>
-          <MetricRow label={t("common.status")} value={job.status} />
-          <MetricRow label={t("common.type")} value={job.type} />
-          <MetricRow label={t("common.logs")} value={String(job.logs.length)} />
-        </>
-      ) : (
-        <EmptyCompact label={t("empty.noActiveJob")} />
-      )}
-    </div>
-  );
-}
-
 function SetupSubNav({ auth, hermes, openclaw }: { auth: XhsAuthStatus | null; hermes?: RuntimeStatus; openclaw?: RuntimeStatus }) {
   const { t } = useI18n();
   return (
@@ -2847,6 +2994,8 @@ function KnowledgeView({
   draft,
   events,
   model,
+  modelOptions,
+  modelValue,
   onApprove,
   onAttachFiles,
   onComposerModeChange,
@@ -2859,7 +3008,9 @@ function KnowledgeView({
   onSend,
   onStop,
   permissionMode,
+  queuedSteerCount,
   reasoningEffort,
+  runPending,
   selectedAgent,
   selectedArtifact,
   skills,
@@ -2872,6 +3023,8 @@ function KnowledgeView({
   draft: string;
   events: HermesChatEvent[];
   model: string;
+  modelOptions: HermesModelOption[];
+  modelValue: string;
   onApprove: (runId: string, choice: string) => void;
   onAttachFiles: (files: FileList | null) => void;
   onComposerModeChange: (mode: ChatComposerMode) => void;
@@ -2884,7 +3037,9 @@ function KnowledgeView({
   onSend: () => void;
   onStop: () => void;
   permissionMode: ChatPermissionMode;
+  queuedSteerCount: number;
   reasoningEffort: ChatReasoningEffort;
+  runPending: boolean;
   selectedAgent?: SocialAgent;
   selectedArtifact: ArtifactContent | null;
   skills: HermesSkillInfo[];
@@ -2902,6 +3057,8 @@ function KnowledgeView({
           draft={draft}
           events={events}
           model={model}
+          modelOptions={modelOptions}
+          modelValue={modelValue}
           onApprove={onApprove}
           onAttachFiles={onAttachFiles}
           onComposerModeChange={onComposerModeChange}
@@ -2913,7 +3070,9 @@ function KnowledgeView({
           onSend={onSend}
           onStop={onStop}
           permissionMode={permissionMode}
+          queuedSteerCount={queuedSteerCount}
           reasoningEffort={reasoningEffort}
+          runPending={runPending}
           selectedAgent={selectedAgent}
           skills={skills}
           status={status}
@@ -3616,7 +3775,19 @@ function CalendarView({
   );
 }
 
-function BoardView({ busy, onRun, tasks }: { busy: string | null; onRun: (task: SocialBoardTask) => void; tasks: SocialBoardTask[] }) {
+function BoardView({
+  busy,
+  onOpenSession,
+  onRun,
+  selectedJob,
+  tasks
+}: {
+  busy: string | null;
+  onOpenSession: (task: SocialBoardTask) => void;
+  onRun: (task: SocialBoardTask) => void;
+  selectedJob: JobSnapshot | null;
+  tasks: SocialBoardTask[];
+}) {
   const { t } = useI18n();
   return (
     <div className="board-grid">
@@ -3630,31 +3801,59 @@ function BoardView({ busy, onRun, tasks }: { busy: string | null; onRun: (task: 
             </div>
             <div className="space-y-2">
               {laneTasks.length ? (
-                laneTasks.map((task) => (
-                  <Card key={task.id} size="sm">
-                    <CardHeader>
-                      <CardTitle className="truncate">{task.title}</CardTitle>
-                      <CardDescription>
-                        {task.profile} / {task.llm?.model ?? task.runner} / {task.source}
-                      </CardDescription>
-                    </CardHeader>
-                    {(task.status === "ready" || task.status === "failed") ? (
-                      <CardContent>
-                        <Button
-                          className="w-full"
-                          disabled={busy === `social-board-run-${task.id}`}
-                          onClick={() => onRun(task)}
-                          size="sm"
-                          type="button"
-                          variant="outline"
-                        >
-                          {busy === `social-board-run-${task.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                          {t("common.run")}
-                        </Button>
+                laneTasks.map((task) => {
+                  const job = selectedJob?.id === task.lastJobId ? selectedJob : null;
+                  return (
+                    <Card key={task.id} size="sm">
+                      <CardHeader>
+                        <CardTitle className="truncate">{task.title}</CardTitle>
+                        <CardDescription>
+                          {task.profile} / {task.llm?.model ?? task.runner} / {task.source}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="board-task-content">
+                        <div className="board-task-meta">
+                          <MetricRow label={t("common.agent")} value={task.agentId} />
+                          <MetricRow label={t("common.type")} value={t(socialCronTaskLabelKey[task.taskType])} />
+                          {task.lastJobId ? <MetricRow label="Job" value={task.lastJobId} /> : null}
+                        </div>
+                        {task.error ? <p className="board-task-error">{task.error}</p> : null}
+                        {!task.error && task.result ? <pre className="board-task-result">{task.result}</pre> : null}
+                        {job ? <JobLogPanel compact job={job} /> : null}
+                        {task.hermesSessionId && (task.status === "done" || task.status === "failed") ? (
+                          <Button
+                            className="w-full"
+                            disabled={busy === `social-board-session-${task.id}`}
+                            onClick={() => onOpenSession(task)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {busy === `social-board-session-${task.id}` ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <MessageSquare className="size-3.5" />
+                            )}
+                            {t("common.resume")}
+                          </Button>
+                        ) : null}
+                        {!task.readOnly && (task.status === "ready" || task.status === "failed") ? (
+                          <Button
+                            className="w-full"
+                            disabled={busy === `social-board-run-${task.id}`}
+                            onClick={() => onRun(task)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {busy === `social-board-run-${task.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                            {t("common.run")}
+                          </Button>
+                        ) : null}
                       </CardContent>
-                    ) : null}
-                  </Card>
-                ))
+                    </Card>
+                  );
+                })
               ) : (
                 <EmptyCompact label={t("empty.emptyLane")} />
               )}
@@ -3739,6 +3938,8 @@ function ChatView({
   draft,
   events,
   model,
+  modelOptions,
+  modelValue,
   onAttachFiles,
   onApprove,
   onComposerModeChange,
@@ -3750,7 +3951,9 @@ function ChatView({
   onSend,
   onStop,
   permissionMode,
+  queuedSteerCount,
   reasoningEffort,
+  runPending,
   selectedAgent,
   skills,
   status
@@ -3762,6 +3965,8 @@ function ChatView({
   draft: string;
   events: HermesChatEvent[];
   model: string;
+  modelOptions: HermesModelOption[];
+  modelValue: string;
   onAttachFiles: (files: FileList | null) => void;
   onApprove: (runId: string, choice: string) => void;
   onComposerModeChange: (mode: ChatComposerMode) => void;
@@ -3773,13 +3978,15 @@ function ChatView({
   onSend: () => void;
   onStop: () => void;
   permissionMode: ChatPermissionMode;
+  queuedSteerCount: number;
   reasoningEffort: ChatReasoningEffort;
+  runPending: boolean;
   selectedAgent?: SocialAgent;
   skills: HermesSkillInfo[];
   status: HermesChatStatus | null;
 }) {
   const { locale, t } = useI18n();
-  const transcript = buildChatTranscript(events, t);
+  const transcript = buildChatTranscript(events, t, { thinkingId: activeRunId ?? (runPending ? "pending" : null) });
   const contextBalance = getChatContextBalance(model, events, t);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -3836,6 +4043,7 @@ function ChatView({
         {activeRunId ? (
           <div className="chat-runtime-bar">
             <Badge variant="outline">{activeRunId}</Badge>
+            {queuedSteerCount ? <Badge variant="outline">{t("chat.queuedSteers", { count: queuedSteerCount })}</Badge> : null}
           </div>
         ) : null}
         <div className="chat-composer">
@@ -3872,10 +4080,9 @@ function ChatView({
               </div>
             ) : null}
             <Textarea
-              disabled={Boolean(activeRunId)}
               onChange={(event) => onDraftChange(mergeSelectedSkillMentions(event.target.value, mentionedSkills))}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.nativeEvent.isComposing && (event.shiftKey || event.metaKey || event.ctrlKey)) {
+                if (shouldSendChatOnKeyDown({ key: event.key, isComposing: event.nativeEvent.isComposing, shiftKey: event.shiftKey })) {
                   event.preventDefault();
                   onSend();
                 }
@@ -3986,15 +4193,15 @@ function ChatView({
                 </SelectItem>
               </SelectContent>
             </Select>
-            <Select onValueChange={onModelChange} value={model}>
+            <Select disabled={!modelOptions.length} onValueChange={onModelChange} value={modelValue}>
               <SelectTrigger aria-label={t("chat.model")} className="chat-model-select" size="sm">
                 <Zap className="size-3.5" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="start" className="chat-select-content chat-model-menu" position="popper" sideOffset={8}>
-                {chatModelOptions.map((option) => (
-                  <SelectItem className="chat-select-item" key={option} value={option}>
-                    {option}
+                {modelOptions.map((option) => (
+                  <SelectItem className="chat-select-item" key={option.value} value={option.value}>
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -4096,15 +4303,20 @@ function ChatView({
             >
               <Mic className="size-4" />
             </Button>
+            <Button
+              aria-label={activeRunId ? t("chat.queueSteer") : t("chat.sendMessage")}
+              disabled={(!draft.trim() && !attachments.length) || !status?.available}
+              onClick={onSend}
+              size="icon"
+              type="button"
+            >
+              <Send className="size-4" />
+            </Button>
             {activeRunId ? (
               <Button aria-label={t("chat.stopRun")} onClick={onStop} size="icon" type="button" variant="destructive">
                 <Square className="size-4" />
               </Button>
-            ) : (
-              <Button disabled={(!draft.trim() && !attachments.length) || !status?.available} onClick={onSend} size="icon" type="button">
-                <Send className="size-4" />
-              </Button>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -4157,7 +4369,7 @@ function ChatConnectionStatus({ className, status }: { className?: string; statu
 
 interface ChatTranscriptItemModel {
   id: string;
-  kind: "user" | "assistant" | "tool" | "system" | "notice" | "approval";
+  kind: "user" | "assistant" | "tool" | "system" | "notice" | "approval" | "thinking";
   text: string;
   agentText?: string;
   runId?: string;
@@ -4178,6 +4390,10 @@ interface ChatTranscriptToolModel {
   state?: "running" | "done" | "failed";
 }
 
+interface ChatTranscriptBuildOptions {
+  thinkingId?: string | null;
+}
+
 const chatMarkdownComponents: Components = {
   img({ alt, src, ...props }) {
     return <img alt={alt ?? ""} loading="lazy" src={resolveChatMarkdownImageUrl(src)} {...props} />;
@@ -4193,10 +4409,17 @@ function ChatTranscriptItem({
 }) {
   const { t } = useI18n();
   const [toolDetailsExpanded, setToolDetailsExpanded] = useState(item.kind === "tool" && item.state !== "done");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (item.kind === "tool") setToolDetailsExpanded(item.state !== "done");
   }, [item.id, item.kind, item.state]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [copied, item.id]);
 
   if (item.kind === "approval" && item.runId) {
     return (
@@ -4259,9 +4482,51 @@ function ChatTranscriptItem({
     );
   }
 
+  if (item.kind === "thinking") {
+    return (
+      <div className="chat-line chat-line-thinking" aria-live="polite">
+        <span className="chat-thinking-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        <div className="chat-line-body">
+          <span>{item.text}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const copyText = item.text.trim();
+  const copyLabel = copied ? t("chat.copied") : t("chat.copyMessage");
+
   return (
     <div className={cn("chat-message", `chat-message-${item.kind}`)}>
       <div className="chat-message-role">{item.kind}</div>
+      {copyText ? (
+        <div className="chat-message-actions">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={copyLabel}
+                className="chat-message-copy"
+                data-copied={copied ? "true" : "false"}
+                onClick={() => {
+                  void copyChatMessageText(copyText)
+                    .then(() => setCopied(true))
+                    .catch(() => setCopied(false));
+                }}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                {copied ? <CheckCircle2 className="size-3.5" /> : <Copy className="size-3.5" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copyLabel}</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
       <div className="chat-message-text">
         {item.kind === "assistant" ? (
           <ReactMarkdown components={chatMarkdownComponents} remarkPlugins={[remarkGfm]}>
@@ -4275,14 +4540,28 @@ function ChatTranscriptItem({
   );
 }
 
-function toolTranscriptSummary(item: ChatTranscriptItemModel, tools: ChatTranscriptToolModel[], t: TFunction): string {
-  if (tools.length === 1) return tools[0].label ?? tools[0].tool ?? t("chat.toolFallback");
-  const state =
-    item.state === "running" ? t("chat.toolState.running") : item.state === "failed" ? t("chat.toolState.failed") : t("chat.toolState.completed");
-  return t("chat.toolCallsState", { count: tools.length, state });
+async function copyChatMessageText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
 }
 
-function buildChatTranscript(events: HermesChatEvent[], t?: TFunction): ChatTranscriptItemModel[] {
+function buildChatTranscript(events: HermesChatEvent[], t?: TFunction, options: ChatTranscriptBuildOptions = {}): ChatTranscriptItemModel[] {
   const items: ChatTranscriptItemModel[] = [];
   let assistant: ChatTranscriptItemModel | undefined;
 
@@ -4391,7 +4670,24 @@ function buildChatTranscript(events: HermesChatEvent[], t?: TFunction): ChatTran
     }
   }
 
-  return items.filter((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval");
+  if (options.thinkingId && shouldShowThinkingIndicator(items)) {
+    items.push({
+      id: `thinking-${options.thinkingId}`,
+      kind: "thinking",
+      text: t?.("chat.thinking") ?? "Thinking"
+    });
+  }
+
+  return items.filter((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval" || item.kind === "thinking");
+}
+
+function shouldShowThinkingIndicator(items: ChatTranscriptItemModel[]): boolean {
+  const lastVisible = [...items].reverse().find((item) => item.text.trim() || item.kind === "tool" || item.kind === "approval");
+  if (!lastVisible) return true;
+  if (lastVisible.kind === "approval") return false;
+  if (lastVisible.kind === "tool") return lastVisible.state !== "running";
+  if (lastVisible.kind === "system" || lastVisible.kind === "assistant") return false;
+  return true;
 }
 
 function getChatContextBalance(model: string, events: HermesChatEvent[], t: TFunction): ChatContextBalance {
@@ -4540,7 +4836,7 @@ function isRuntimeEvent(event: HermesChatEvent): boolean {
 
 function buildAgentRuntimeEvent(
   run: HermesChatRunResponse,
-  options: Pick<HermesChatRunOptions, "agentId" | "model" | "permissionMode" | "reasoningEffort">
+  options: Pick<HermesChatRunOptions, "agentId" | "model" | "provider" | "permissionMode" | "reasoningEffort">
 ): HermesChatEvent {
   return {
     event: "agent-runtime",
@@ -4548,6 +4844,7 @@ function buildAgentRuntimeEvent(
     timestamp: Date.now() / 1000,
     agentId: options.agentId,
     model: options.model,
+    provider: options.provider,
     permissionMode: options.permissionMode,
     reasoningEffort: options.reasoningEffort,
     sessionId: run.sessionId,
@@ -4834,22 +5131,32 @@ function HermesGatewayEventRow({ event, locale }: { event: HermesGatewayEvent; l
   );
 }
 
-function JobsView({ job }: { job: JobSnapshot | null }) {
+function JobLogPanel({
+  compact,
+  description,
+  emptyLabel,
+  job
+}: {
+  compact?: boolean;
+  description?: string;
+  emptyLabel?: string;
+  job: JobSnapshot | null;
+}) {
   const { t } = useI18n();
+  const body = job?.logs.join("\n") || job?.command.join(" ");
   return (
-    <Card className="h-full min-h-[520px]">
-      <CardHeader className="border-b">
-        <CardTitle>{job?.type ?? t("jobs.noActive")}</CardTitle>
-        <CardDescription>{job ? job.command.join(" ") : t("jobs.description")}</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
+    <div className={cn("job-log-panel", compact && "job-log-panel-compact")}>
+      <div className="job-log-header">
+        <div>
+          <strong>{job?.type ?? t("jobs.noActive")}</strong>
+          <span>{job ? job.command.join(" ") : description ?? t("jobs.description")}</span>
+        </div>
         {job ? (
-          <pre>{job.logs.join("\n") || job.command.join(" ")}</pre>
-        ) : (
-          <div className="empty-state">{t("empty.noJobOutput")}</div>
-        )}
-      </CardContent>
-    </Card>
+          <StatusBadge state={job.status === "succeeded" ? "ok" : job.status === "failed" ? "bad" : "warn"} label={job.status} />
+        ) : null}
+      </div>
+      {job ? <pre className="job-log-output">{body}</pre> : <div className="empty-state">{emptyLabel ?? t("empty.noJobOutput")}</div>}
+    </div>
   );
 }
 
@@ -4857,6 +5164,7 @@ function SetupView({
   auth,
   busy,
   hermes,
+  job,
   migration,
   onBootstrap,
   onLogin,
@@ -4866,6 +5174,7 @@ function SetupView({
   auth: XhsAuthStatus | null;
   busy: string | null;
   hermes?: RuntimeStatus;
+  job: JobSnapshot | null;
   migration: MigrationPlan | null;
   onBootstrap: () => void;
   onLogin: (mode: "qrcode" | "browser") => void;
@@ -4928,6 +5237,16 @@ function SetupView({
               Browser
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="setup-job-card" size="sm">
+        <CardHeader>
+          <CardTitle>{t("jobs.latest")}</CardTitle>
+          <CardDescription>{t("jobs.runtimeDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <JobLogPanel description={t("jobs.runtimeDescription")} emptyLabel={t("jobs.noRuntimeJob")} job={job} />
         </CardContent>
       </Card>
     </div>
@@ -5098,6 +5417,10 @@ function normalizeChatSessionState(value: unknown): ChatSessionState {
   return { sessions, activeId: activeId ?? "" };
 }
 
+function withActiveChatSession(state: ChatSessionState, sessionId: string): ChatSessionState {
+  return state.sessions.some((session) => session.id === sessionId) ? { ...state, activeId: sessionId } : state;
+}
+
 function saveChatSession(session: ChatSession): Promise<void> {
   const nextVersion = (chatSessionSaveVersions.get(session.id) ?? 0) + 1;
   chatSessionSaveVersions.set(session.id, nextVersion);
@@ -5168,6 +5491,43 @@ function createChatSession(agentId?: string): ChatSession {
     agentId,
     events: []
   };
+}
+
+function createChatSessionFromSocialBoardTask(task: SocialBoardTask): ChatSession {
+  const now = Date.now();
+  const session = createChatSession(task.agentId);
+  const output = task.error ?? task.result ?? "Cron job completed.";
+  return {
+    ...session,
+    title: deriveSocialBoardTaskSessionTitle(task),
+    hermesSessionId: task.hermesSessionId,
+    createdAt: now,
+    updatedAt: now,
+    events: [
+      {
+        event: "agent-runtime",
+        timestamp: now / 1000,
+        agentId: task.agentId,
+        model: task.llm?.model,
+        provider: task.llm?.provider,
+        sessionId: session.id,
+        hermesSessionId: task.hermesSessionId,
+        status: "completed"
+      },
+      {
+        event: task.error ? "run.failed" : "run.completed",
+        timestamp: now / 1000,
+        output: task.error ? undefined : output,
+        error: task.error,
+        hermesSessionId: task.hermesSessionId
+      }
+    ]
+  };
+}
+
+function deriveSocialBoardTaskSessionTitle(task: SocialBoardTask): string {
+  const title = task.title.replace(/\s+/g, " ").trim();
+  return `Cron: ${title || task.lastJobId || task.id}`.slice(0, 80);
 }
 
 function createChatSessionId(): string {
@@ -5423,16 +5783,6 @@ function resolveSkillMentions(value: string, skills: HermesSkillInfo[]): { skill
   return { skills: resolved.sort(sortHermesSkills) };
 }
 
-function buildSkillInstructions(skills: HermesSkillInfo[]): string | undefined {
-  if (!skills.length) return undefined;
-  const lines = skills.map((skill) => `- $${skill.name} (${skill.category || "uncategorized"}): ${skill.description || skill.path}`);
-  return [
-    "The user explicitly selected these enabled Hermes skills for this run.",
-    "Treat $skill tokens in the user message as skill selection hints and apply the matching local skill behavior when relevant.",
-    ...lines
-  ].join("\n");
-}
-
 async function getHermesChatStatus(): Promise<HermesChatStatus> {
   try {
     return await api<HermesChatStatus>("/api/chat/hermes/status");
@@ -5508,8 +5858,10 @@ async function createHermesChatRun(
       agentId: options.agentId,
       input,
       sessionId,
+      hermesSessionId: options.hermesSessionId,
       instructions: options.instructions,
       model: options.model,
+      provider: options.provider,
       permissionMode: options.permissionMode,
       reasoningEffort: options.reasoningEffort
     })
@@ -5736,56 +6088,26 @@ function buildChatMessageWithAttachments(message: string, attachments: ChatAttac
   return [message, "Attached local context:", rendered].filter(Boolean).join("\n\n");
 }
 
-function buildVaultWorkspaceChatMessage(message: string, artifact: ArtifactContent | null): string {
-  const selectedPath = artifact?.artifact.path;
-  const selectedContent = artifact?.content;
-  return [
-    "Vault workspace mode.",
-    `Vault root: ${vaultWorkspaceRoot}`,
-    selectedPath ? `Current preview path: ${selectedPath}` : "Current preview path: none",
-    "You may modify files only under ~/.growth/vault.",
-    "Prefer editing the referenced or current preview note. Do not rename, delete, or move files unless explicitly requested.",
-    "After edits, report changed paths and the reason for each change.",
-    selectedPath && selectedContent
-      ? ["", `Current preview content (${selectedPath}):`, fencedContent(selectedContent, artifact.artifact.mime === "markdown" ? "markdown" : "text")].join(
-          "\n"
-        )
-      : "",
-    "",
-    "User request:",
-    message
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function buildVaultAttachmentContent(artifact: ArtifactContent): string {
-  return [
-    `Vault root: ${vaultWorkspaceRoot}`,
-    `Vault path: ${artifact.artifact.path}`,
-    "This file is under the allowed vault workspace. Prefer this file when the user asks to modify the referenced document.",
-    "",
-    fencedContent(artifact.content ?? "", artifact.artifact.mime === "markdown" ? "markdown" : "text")
-  ].join("\n");
-}
-
-function fencedContent(content: string, language: string): string {
-  return `\`\`\`${language}\n${content.replaceAll("```", "\\`\\`\\`")}\n\`\`\``;
-}
-
 function buildImageGenerationChatMessage(message: string, attachments: ChatAttachment[]): string {
   const prompt = buildChatMessageWithAttachments(message, attachments).trim() || summarizeAttachments(attachments);
   return [
     "GUI action: Create image.",
-    "Use Hermes' built-in `image_generate` tool for this request.",
-    "Call `image_generate` exactly once unless the user explicitly asks for multiple images.",
+    "For Xiaohongshu/social visual work, information graphics, covers, posters, or dense visual summaries, use the `baoyu-infographic` skill when available.",
+    "Call `skill_view(\"baoyu-infographic\")` before execution when that skill is available.",
+    "Use Hermes' built-in `image_generate` only when `baoyu-infographic` is unavailable or the user explicitly asks for raw image_generate.",
+    "Create exactly one image unless the user explicitly asks for multiple images.",
     "Use aspect_ratio `square` unless the prompt clearly asks for `landscape` or `portrait`.",
-    "After the tool returns, show the generated result in chat as Markdown image syntax and include the URL/path returned by the tool.",
+    "After the skill/tool returns, show the generated or reused result in chat as Markdown image syntax and include the concrete URL/path returned by the skill/tool.",
     "The dashboard persists returned Hermes image files into the selected workspace under `artifacts/images/`; do not invent that artifact path.",
     "",
     "Prompt:",
     prompt
   ].join("\n");
+}
+
+function joinRunInstructions(...sections: Array<string | undefined>): string | undefined {
+  const joined = sections.map((section) => section?.trim()).filter(Boolean).join("\n\n");
+  return joined || undefined;
 }
 
 interface SpeechRecognitionInstance {

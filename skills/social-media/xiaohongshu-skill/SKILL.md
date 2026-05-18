@@ -51,6 +51,21 @@ If `--auth` reports `NEEDS_CONTEXT`, run `xhs login` or `xhs login --qrcode`. Do
 - `BLOCKED`: a required artifact, capability, or user input is missing.
 - `NEEDS_CONTEXT`: the user must supply client specifics or metrics before the next step is valid.
 
+## Output Quality Contract
+
+Apply this contract whenever producing Xiaohongshu copy, note drafts, rewrites, content calendars, daily ops, auto-reply candidates, or publish-ready bodies:
+
+- Write in Xiaohongshu-native plain text, not dense essay prose.
+- Keep Xiaohongshu titles at 20 characters or fewer, counting punctuation and symbols.
+- Separate logical paragraphs, bullet groups, CTAs, and hashtag blocks with at most one blank line.
+- Never emit two or more consecutive blank lines. Xiaohongshu only supports one blank spacer line.
+- Keep visual groups to 2-3 consecutive non-empty lines. Use 4+ only when the user explicitly asks for a compact list.
+- Use emoji or visible symbols as section openers and bullets, such as `🌿 1｜...`, `✅ ...`, `📌 ...`, `• ...`, or `——` dividers.
+- Do not output bare Markdown bullets for publish-ready body copy. Convert `- item` into a native symbol line like `• item`.
+- Do not leak visible Markdown syntax into publish-ready Xiaohongshu bodies: no `**bold**`, `## headings`, Markdown tables, fenced code blocks, or link markup.
+
+This contract does not apply to internal status reports, command output, JSON, or engineering/debug summaries.
+
 ## Mode Router
 
 Choose exactly one mode before doing the work:
@@ -332,5 +347,5 @@ python3 scripts/score_health.py \
 - Prefer concrete artifacts over generic strategy prose.
 - Prefer `xhs` live evidence over browser/manual evidence when authenticated.
 - Prefer capability-aware fallbacks over pretending unavailable tools exist.
-- Never auto-publish, auto-like, auto-comment, auto-follow, or delete content from a calendar or plan; write operations require an explicit user instruction and an action log entry. Dashboard-managed auto-reply must default to draft-only mode and may send `xhs reply` only after the operator explicitly switches that profile to send mode.
+- Never auto-publish, auto-like, auto-comment, auto-follow, or delete content from a calendar or plan; write operations require an explicit user instruction and an action log entry. Dashboard-managed auto-reply defaults to send-reply mode for new or missing profile settings, while profiles explicitly saved as draft-only keep that setting until changed.
 - Keep recommendations consistent with the studio workflow in this skill, not a solo creator workflow.

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +35,31 @@ function writeHermesCronJobs(appConfig: AppConfig, jobs: unknown[]) {
   const cronRoot = join(appConfig.hermesHome, "cron");
   mkdirSync(cronRoot, { recursive: true });
   writeFileSync(join(cronRoot, "jobs.json"), JSON.stringify({ jobs }, null, 2));
+}
+
+function writeHermesConfig(appConfig: AppConfig) {
+  mkdirSync(appConfig.hermesHome, { recursive: true });
+  writeFileSync(
+    join(appConfig.hermesHome, "config.yaml"),
+    [
+      "discord:",
+      "  channel_profiles:",
+      "    '1499387084111347972': default",
+      "    '1499794529946042449': growth-agent"
+    ].join("\n")
+  );
+}
+
+function writeHermesCronOutput(appConfig: AppConfig, jobId: string, fileName: string, content: string) {
+  const outputRoot = join(appConfig.hermesHome, "cron", "output", jobId);
+  mkdirSync(outputRoot, { recursive: true });
+  writeFileSync(join(outputRoot, fileName), content);
+}
+
+function writeHermesCronSession(appConfig: AppConfig, jobId: string, timestamp: string, payload: Record<string, unknown>) {
+  const sessionsRoot = join(appConfig.hermesHome, "sessions");
+  mkdirSync(sessionsRoot, { recursive: true });
+  writeFileSync(join(sessionsRoot, `session_cron_${jobId}_${timestamp}.json`), JSON.stringify(payload, null, 2));
 }
 
 describe("social cron jobs", () => {
@@ -106,6 +131,7 @@ describe("social cron jobs", () => {
       id: "hermes:c6333b595e58",
       source: "hermes",
       readOnly: true,
+      agentId: "growth-agent",
       platform: "xiaohongshu",
       profile: "astrozi",
       taskType: "topic-harvest",
@@ -116,6 +142,113 @@ describe("social cron jobs", () => {
       cronSource: "hermes",
       readOnly: true,
       runner: "hermes"
+    });
+  });
+
+  test("repairs social Hermes cron jobs without origin to the growth-agent Discord channel", () => {
+    const appConfig = config();
+    writeHermesConfig(appConfig);
+    writeHermesCronJobs(appConfig, [
+      {
+        id: "c6333b595e58",
+        name: "xhs-astrozi-topic-harvest-daily",
+        prompt: "Workspace is vault-only: `/Users/chris/.growth/vault/astrozi/xiaohongshu/`.",
+        skills: ["xiaohongshu-skill"],
+        schedule: { kind: "cron", expr: "15 9 * * *", display: "15 9 * * *" },
+        enabled: true,
+        state: "scheduled",
+        deliver: "origin",
+        origin: null
+      }
+    ]);
+
+    expect(listSocialCronJobs(appConfig)[0]).toMatchObject({ id: "hermes:c6333b595e58", agentId: "growth-agent" });
+    const payload = JSON.parse(readFileSync(join(appConfig.hermesHome, "cron", "jobs.json"), "utf8"));
+    expect(payload.jobs[0].origin).toMatchObject({
+      platform: "discord",
+      chat_id: "1499794529946042449",
+      thread_id: "1499794529946042449"
+    });
+  });
+
+  test("surfaces Hermes cron run outputs as read-only growth-agent board activity", () => {
+    const appConfig = config();
+    writeHermesCronJobs(appConfig, [
+      {
+        id: "c6333b595e58",
+        name: "xhs-astrozi-topic-harvest-daily",
+        prompt: "Workspace is vault-only: `/Users/chris/.growth/vault/astrozi/xiaohongshu/`. Return 3-5 candidate topics.",
+        skills: ["xiaohongshu-skill"],
+        schedule: { kind: "cron", expr: "15 9 * * *", display: "15 9 * * *" },
+        enabled: true,
+        state: "scheduled",
+        created_at: "2026-05-17T20:59:36.895712+08:00",
+        next_run_at: "2026-05-19T09:15:00+08:00",
+        repeat: { completed: 1 },
+        workdir: "/Users/chris/.hermes/skills/social-media/xiaohongshu-skill"
+      }
+    ]);
+    writeHermesCronOutput(
+      appConfig,
+      "c6333b595e58",
+      "2026-05-18_09-17-42.md",
+      [
+        "# Cron Job: xhs-astrozi-topic-harvest-daily",
+        "",
+        "**Job ID:** c6333b595e58",
+        "**Run Time:** 2026-05-18 09:17:42",
+        "",
+        "## Prompt",
+        "",
+        "large prompt",
+        "",
+        "## Response",
+        "",
+        "2026-05-18 AstroZi 小红书只读选题采集简报",
+        "",
+        "已沉淀到：`/Users/chris/.growth/vault/astrozi/xiaohongshu/xhs-evidence/20260518-topic-harvest-brief.md`"
+      ].join("\n")
+    );
+    writeHermesCronSession(appConfig, "c6333b595e58", "20260518_091522", {
+      session_id: "cron_c6333b595e58_20260518_091522",
+      session_start: "2026-05-18T09:15:22.178792",
+      last_updated: "2026-05-18T09:17:42.909394",
+      messages: [{ role: "assistant", content: "2026-05-18 AstroZi 小红书只读选题采集简报" }]
+    });
+
+    const task = listSocialBoardTasks(appConfig)[0];
+    const ledgerPath = join(appConfig.growthRoot, "social-board", "agents", "growth-agent", "hermes-cron-runs.json");
+    expect(task).toMatchObject({
+      id: "hermes-run:c6333b595e58:2026-05-18_09-17-42",
+      agentId: "growth-agent",
+      runner: "hermes",
+      cronSource: "hermes",
+      readOnly: true,
+      source: "cron",
+      sourceId: "hermes:c6333b595e58",
+      status: "done",
+      profile: "astrozi",
+      taskType: "topic-harvest"
+    });
+    expect(task.hermesSessionId).toBe("cron_c6333b595e58_20260518_091522");
+    expect(task.hermesSessionPath).toContain("session_cron_c6333b595e58_20260518_091522.json");
+    expect(task.result).toContain("AstroZi 小红书只读选题采集简报");
+    expect(task.sourceOutputPath).toContain("2026-05-18_09-17-42.md");
+    expect(existsSync(ledgerPath)).toBe(true);
+    expect(JSON.parse(readFileSync(ledgerPath, "utf8")).tasks[0]).toMatchObject({
+      id: task.id,
+      sourceOutputPath: task.sourceOutputPath,
+      hermesSessionId: "cron_c6333b595e58_20260518_091522"
+    });
+
+    const calendarBoardItem = listSocialTaskCalendar(appConfig).find((item) => item.id === task.id);
+    expect(calendarBoardItem).toMatchObject({
+      source: "board",
+      cronSource: "hermes",
+      readOnly: true,
+      agentId: "growth-agent",
+      runner: "hermes",
+      status: "done"
     });
   });
 

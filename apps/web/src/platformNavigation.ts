@@ -16,13 +16,12 @@ export type DashboardView =
   | "chat"
   | "hermes"
   | "skills"
-  | "jobs"
   | "setup";
 
 export const platformModeStorageKey = "growth-hacker.platformMode";
 export const defaultPlatformMode: PlatformId = XIAOHONGSHU_PLATFORM;
 export const platformModeIds: PlatformId[] = [XIAOHONGSHU_PLATFORM, "facebook", "x", "youtube"];
-export const sharedDashboardViews: DashboardView[] = ["workspace", "knowledge", "calendar", "board", "chat", "hermes", "skills", "jobs", "setup"];
+export const sharedDashboardViews: DashboardView[] = ["workspace", "knowledge", "calendar", "board", "chat", "hermes", "skills", "setup"];
 const platformLogoPaths: Partial<Record<PlatformId, string>> = {
   [XIAOHONGSHU_PLATFORM]: "/platform-logos/xiaohongshu.svg",
   facebook: "/platform-logos/facebook.svg",

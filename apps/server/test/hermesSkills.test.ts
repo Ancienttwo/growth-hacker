@@ -33,6 +33,16 @@ function writeSkill(appConfig: AppConfig, category: string, name: string, descri
   );
 }
 
+function writeExternalSkill(root: string, name: string, description: string): void {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`,
+    "utf8"
+  );
+}
+
 describe("Hermes profile skills", () => {
   test("lists profile skills with disabled state from the profile config", () => {
     const appConfig = config();
@@ -51,6 +61,43 @@ describe("Hermes profile skills", () => {
       status: "disabled"
     });
     expect(skills.find((skill) => skill.name === "xiaohongshu-skill")).toMatchObject({ enabled: true });
+  });
+
+  test("lists skills from profile external_dirs", () => {
+    const appConfig = config();
+    const externalRoot = join(appConfig.growthRoot, "external-skills");
+    mkdirSync(join(appConfig.hermesHome, "profiles", "growth-agent"), { recursive: true });
+    writeFileSync(
+      join(appConfig.hermesHome, "profiles", "growth-agent", "config.yaml"),
+      `skills:\n  external_dirs:\n    - ${externalRoot}\n  disabled:\n    - signal-detector\n`,
+      "utf8"
+    );
+    writeSkill(appConfig, "social-media", "xiaohongshu-skill", "XHS operations");
+    writeExternalSkill(externalRoot, "signal-detector", "Detect growth signals");
+
+    const skills = listHermesProfileSkills(appConfig, "growth-agent");
+
+    expect(skills.map((skill) => skill.name)).toEqual(["xiaohongshu-skill", "signal-detector"]);
+    expect(skills.find((skill) => skill.name === "signal-detector")).toMatchObject({
+      category: "",
+      description: "Detect growth signals",
+      enabled: false,
+      path: join(externalRoot, "signal-detector", "SKILL.md"),
+      status: "disabled"
+    });
+  });
+
+  test("keeps external skills visible when the profile skills directory is absent", () => {
+    const appConfig = config();
+    const externalRoot = join(appConfig.growthRoot, "external-skills");
+    mkdirSync(join(appConfig.hermesHome, "profiles", "growth-agent"), { recursive: true });
+    writeFileSync(join(appConfig.hermesHome, "profiles", "growth-agent", "config.yaml"), `skills:\n  external_dirs:\n    - ${externalRoot}\n`, "utf8");
+    writeExternalSkill(externalRoot, "signal-detector", "Detect growth signals");
+
+    const skills = listHermesProfileSkills(appConfig, "growth-agent");
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]).toMatchObject({ name: "signal-detector", enabled: true });
   });
 
   test("updates the disabled list for an allowed agent only", () => {

@@ -47,7 +47,7 @@ Social cron jobs read Hermes' authenticated provider/model inventory through `he
 - The dashboard never deletes legacy `~/.xiaohongshu` data.
 - Legacy migration is non-destructive and reports conflicts instead of overwriting files.
 - Xiaohongshu write actions such as publish, like, follow, or delete are intentionally outside v1.
-- Xiaohongshu auto-reply defaults to draft-only mode; it sends comment replies only after the operator explicitly switches the profile settings to send mode.
+- Xiaohongshu auto-reply defaults to send-reply mode for new or missing profile settings. Profiles that were explicitly saved as draft-only keep that setting until changed.
 - Runtime and XHS auth responses are redacted before they reach the UI.
 
 ## License

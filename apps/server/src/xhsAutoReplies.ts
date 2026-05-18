@@ -464,13 +464,13 @@ function patchItem(store: QueueStore, id: string, patch: Partial<XhsAutoReplyIte
 function readSettings(config: AppConfig, profile: string): XhsAutoReplySettings {
   const stylePrompt = existsSync(stylePath(config, profile)) ? readFileSync(stylePath(config, profile), "utf8").trim() : "";
   if (!existsSync(settingsPath(config, profile))) {
-    return { stylePrompt, locale: "zh-CN", dryRun: true, maxRepliesPerRun: 10, delaySeconds: 12 };
+    return { stylePrompt, locale: "zh-CN", dryRun: false, maxRepliesPerRun: 10, delaySeconds: 12 };
   }
   const payload = JSON.parse(readFileSync(settingsPath(config, profile), "utf8")) as SettingsStore;
   return {
     stylePrompt,
     locale: normalizeLocale(payload.locale) ?? "zh-CN",
-    dryRun: payload.dryRun ?? true,
+    dryRun: payload.dryRun ?? false,
     maxRepliesPerRun: normalizeInteger(payload.maxRepliesPerRun, 10, 1, 50),
     delaySeconds: normalizeInteger(payload.delaySeconds, 12, 0, 120),
     updatedAt: payload.updatedAt

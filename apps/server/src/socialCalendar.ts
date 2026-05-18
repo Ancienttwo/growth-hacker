@@ -29,6 +29,8 @@ export function listSocialTaskCalendar(config: AppConfig): SocialTaskCalendarIte
     .map((task) => ({
       id: task.id,
       source: "board",
+      cronSource: task.cronSource,
+      readOnly: task.readOnly,
       title: task.title,
       startsAt: task.startedAt ?? task.createdAt,
       agentId: task.agentId,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildHermesChatInputFromTranscript } from "./chatInput";
+import { buildHermesChatInputFromTranscript, shouldSendChatOnKeyDown } from "./chatInput";
 
 describe("Hermes chat input", () => {
   test("replays hidden agent payloads for imported documents", () => {
@@ -56,5 +56,20 @@ describe("Hermes chat input", () => {
         content: "下一句"
       }
     ]);
+  });
+});
+
+describe("chat composer shortcuts", () => {
+  test("sends on Enter and keeps Shift+Enter as newline", () => {
+    expect(shouldSendChatOnKeyDown({ key: "Enter" })).toBe(true);
+    expect(shouldSendChatOnKeyDown({ key: "Enter", shiftKey: true })).toBe(false);
+  });
+
+  test("does not send while IME composition is active", () => {
+    expect(shouldSendChatOnKeyDown({ key: "Enter", isComposing: true })).toBe(false);
+  });
+
+  test("ignores non-Enter keys", () => {
+    expect(shouldSendChatOnKeyDown({ key: "a" })).toBe(false);
   });
 });

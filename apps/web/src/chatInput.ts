@@ -9,6 +9,12 @@ export interface AgentTranscriptItem {
   agentText?: string;
 }
 
+export interface ChatComposerKeyDown {
+  key: string;
+  isComposing?: boolean;
+  shiftKey?: boolean;
+}
+
 export function buildHermesChatInputFromTranscript(items: AgentTranscriptItem[], nextUserMessage: string): AgentChatMessage[] {
   const prior = items
     .filter((item) => item.kind === "user" || item.kind === "assistant")
@@ -19,6 +25,10 @@ export function buildHermesChatInputFromTranscript(items: AgentTranscriptItem[],
     .filter((item) => item.content)
     .slice(-16);
   return [...prior, { role: "user", content: nextUserMessage }];
+}
+
+export function shouldSendChatOnKeyDown(event: ChatComposerKeyDown): boolean {
+  return event.key === "Enter" && !event.isComposing && !event.shiftKey;
 }
 
 function agentTranscriptContent(item: AgentTranscriptItem): string {

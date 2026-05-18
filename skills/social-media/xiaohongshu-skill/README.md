@@ -174,7 +174,7 @@ Read-only commands (`search`, `read`, `comments`, `user`, `user-posts`, `my-note
 
 Write commands (`post`, `delete`, `like`, `favorite`, `comment`, `reply`, `follow`, `unfollow`) require an explicit user request for that specific action. For publishing, keep review drafts in Markdown but use `scripts/publish_note.py` as the publish boundary: dry-run first, convert Markdown to Xiaohongshu-native plain text, reject leaked Markdown markers, then run with `--post` only after explicit authorization. Other write commands must confirm the active account with `xhs whoami --json`; after any write, append the result or error code to `~/.growth/vault/<profile>/xiaohongshu/xhs-action-log.md`.
 
-Dashboard-managed auto-reply must default to draft-only mode. It may send `xhs reply` only when the operator explicitly switches that profile to send mode in the dashboard settings.
+Dashboard-managed auto-reply defaults to send-reply mode for new or missing profile settings. Profiles that were explicitly saved as draft-only keep that setting until changed.
 
 ## Repository Layout
 

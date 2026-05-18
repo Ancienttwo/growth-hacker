@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 
 import type { HermesSkillInfo } from "@growth-hacker/core";
 
@@ -12,12 +13,14 @@ interface ProfileSkillConfig {
 
 export function listHermesProfileSkills(config: AppConfig, agentId: string): HermesSkillInfo[] {
   assertAllowedAgent(config, agentId);
-  const skillsRoot = profileSkillsRoot(config, agentId);
-  if (!existsSync(skillsRoot)) return [];
-
-  const disabled = readDisabledSkills(config, agentId);
-  return findSkillFiles(skillsRoot)
-    .map((path) => skillInfoFromFile(skillsRoot, path, disabled))
+  const profileConfig = readProfileSkillConfig(config, agentId);
+  const skillsConfig = recordValue(profileConfig.data.skills);
+  const disabled = normalizeStringSet(skillsConfig.disabled);
+  return skillRoots(config, agentId, profileConfig)
+    .flatMap((root) => {
+      if (!existsSync(root)) return [];
+      return findSkillFiles(root).map((path) => skillInfoFromFile(root, path, disabled));
+    })
     .sort(sortHermesSkills);
 }
 
@@ -64,17 +67,25 @@ function profileConfigPath(config: AppConfig, agentId: string): string {
   return join(config.hermesHome, "profiles", agentId, "config.yaml");
 }
 
-function readDisabledSkills(config: AppConfig, agentId: string): Set<string> {
-  const profileConfig = readProfileSkillConfig(config, agentId);
-  return normalizeStringSet(recordValue(profileConfig.data.skills).disabled);
-}
-
 function readProfileSkillConfig(config: AppConfig, agentId: string): ProfileSkillConfig {
   assertAllowedAgent(config, agentId);
   const path = profileConfigPath(config, agentId);
   if (!existsSync(path)) return { path, data: {} };
   const parsed = Bun.YAML.parse(readFileSync(path, "utf8"));
   return { path, data: recordValue(parsed) };
+}
+
+function skillRoots(config: AppConfig, agentId: string, profileConfig: ProfileSkillConfig): string[] {
+  const skillsConfig = recordValue(profileConfig.data.skills);
+  const roots = [profileSkillsRoot(config, agentId), ...normalizeStringList(skillsConfig.external_dirs).map(expandHomePath)];
+  const seen = new Set<string>();
+  return roots
+    .map((root) => resolve(root))
+    .filter((root) => {
+      if (seen.has(root)) return false;
+      seen.add(root);
+      return true;
+    });
 }
 
 function findSkillFiles(root: string): string[] {
@@ -128,6 +139,18 @@ function recordValue(value: unknown): Record<string, unknown> {
 function normalizeStringSet(value: unknown): Set<string> {
   if (!Array.isArray(value)) return new Set();
   return new Set(value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()));
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+}
+
+function expandHomePath(value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/")) return join(homedir(), value.slice(2));
+  return value;
 }
 
 function stringValue(value: unknown): string {

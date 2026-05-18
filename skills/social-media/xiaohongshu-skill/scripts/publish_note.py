@@ -32,6 +32,11 @@ FORBIDDEN_MARKDOWN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("html_tag", re.compile(r"</?[A-Za-z][^>]*>")),
 ]
 
+STRUCTURAL_LINE_MARKER = re.compile(
+    r"^\s*(?:[•·◇◆▪▫▶▷➜→—–-]|[0-9]+[.、｜]|[✅✔☑📌💡🌿🔥⚡✨🎯💎⭐🌟🔻➖🧩📝💬👉])"
+)
+MAX_XHS_TITLE_CHARS = 20
+
 
 @dataclass(frozen=True)
 class PreparedNote:
@@ -81,9 +86,9 @@ def markdown_to_xhs_native(text: str) -> str:
         line = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
         # Blockquotes become plain quoted copy.
         line = re.sub(r"^\s*>\s?", "", line)
-        # Checklists/bullets become native short lines.
-        line = re.sub(r"^\s*[-*+]\s+\[[ xX]\]\s+", "", line)
-        line = re.sub(r"^\s*[-*+]\s+", "", line)
+        # Checklists/bullets become native symbol lines.
+        line = re.sub(r"^\s*[-*+]\s+\[[ xX]\]\s+", "• ", line)
+        line = re.sub(r"^\s*[-*+]\s+", "• ", line)
         # Numbered Markdown lists: keep numbers, remove only indentation noise.
         line = re.sub(r"^\s+(\d+[.、])\s+", r"\1 ", line)
         # Inline links: keep readable anchor text; drop URL syntax.
@@ -105,7 +110,7 @@ def markdown_to_xhs_native(text: str) -> str:
 
         lines.append(line.strip())
 
-    # Normalize vertical rhythm: collapse 3+ blank lines to 2, trim spaces.
+    # Xiaohongshu supports at most one blank spacer line between blocks.
     output = "\n".join(lines)
     output = re.sub(r"[ \t]+\n", "\n", output)
     output = re.sub(r"\n{3,}", "\n\n", output)
@@ -118,6 +123,62 @@ def find_markdown_leaks(text: str) -> list[str]:
         if pattern.search(text):
             leaks.append(name)
     return leaks
+
+
+def max_consecutive_nonempty_lines(text: str) -> int:
+    longest = 0
+    current = 0
+    for line in text.splitlines():
+        if line.strip():
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def max_consecutive_blank_lines(text: str) -> int:
+    longest = 0
+    current = 0
+    for line in text.splitlines():
+        if line.strip():
+            current = 0
+        else:
+            current += 1
+            longest = max(longest, current)
+    return longest
+
+
+def find_native_body_quality_issues(text: str) -> list[str]:
+    issues: list[str] = []
+    blankest = max_consecutive_blank_lines(text)
+    if blankest > 1:
+        issues.append(f"max_consecutive_blank_lines:{blankest}")
+
+    longest = max_consecutive_nonempty_lines(text)
+    if longest > 3:
+        issues.append(f"max_consecutive_nonempty_lines:{longest}")
+
+    content_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if len(content_lines) >= 4 and not any(STRUCTURAL_LINE_MARKER.search(line) for line in content_lines):
+        issues.append("missing_structural_markers")
+    return issues
+
+
+def title_char_count(title: str) -> int:
+    return len(title)
+
+
+def find_title_quality_issues(title: str) -> list[str]:
+    issues: list[str] = []
+    length = title_char_count(title)
+    if length > MAX_XHS_TITLE_CHARS:
+        issues.append(f"title_chars:{length}>20")
+    return issues
 
 
 def prepare_note_from_markdown(markdown: str) -> PreparedNote:
@@ -313,6 +374,8 @@ def main() -> int:
             raise SystemExit(f"Missing image: {image_path}")
 
     note = prepare_note_from_markdown(draft_path.read_text(encoding="utf-8"))
+    title_quality_issues = find_title_quality_issues(note.title)
+    body_quality_issues = find_native_body_quality_issues(note.full_body)
     if args.body_output:
         body_output = Path(args.body_output).expanduser().resolve()
         body_output.parent.mkdir(parents=True, exist_ok=True)
@@ -321,10 +384,28 @@ def main() -> int:
     preview = {
         "status": "prepared" if not args.post else "posting",
         "title": note.title,
+        "title_quality": {
+            "chars": title_char_count(note.title),
+            "max_chars": MAX_XHS_TITLE_CHARS,
+            "issues": title_quality_issues,
+        },
         "body_chars": len(note.full_body),
         "images": [str(path) for path in image_paths],
         "markdown_leaks": find_markdown_leaks(note.full_body),
+        "body_quality": {
+            "max_consecutive_blank_lines": max_consecutive_blank_lines(note.full_body),
+            "max_consecutive_nonempty_lines": max_consecutive_nonempty_lines(note.full_body),
+            "issues": body_quality_issues,
+        },
     }
+    if title_quality_issues:
+        preview["status"] = "blocked_title_quality"
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+        return 1
+    if body_quality_issues:
+        preview["status"] = "blocked_body_quality"
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+        return 1
     if not args.post:
         print(json.dumps(preview, ensure_ascii=False, indent=2))
         return 0
@@ -364,7 +445,14 @@ def main() -> int:
             "images": [str(path) for path in image_paths],
             "result_envelope": result.envelope,
             "verify_snapshot": note_snapshot,
-            "native_body_check": {"markdown_leaks": []},
+            "native_body_check": {
+                "markdown_leaks": [],
+                "title_chars": title_char_count(note.title),
+                "title_quality_issues": title_quality_issues,
+                "max_consecutive_blank_lines": max_consecutive_blank_lines(note.full_body),
+                "max_consecutive_nonempty_lines": max_consecutive_nonempty_lines(note.full_body),
+                "body_quality_issues": body_quality_issues,
+            },
         }
         append_action_log(client_dir, entry)
         print(json.dumps({"ok": True, "note_id": note_id, "snapshot": note_snapshot}, ensure_ascii=False, indent=2))
