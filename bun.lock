@@ -53,6 +53,13 @@
       "name": "@growth-hacker/core",
       "version": "0.1.0",
     },
+    "packages/youtube-cli": {
+      "name": "@growth-hacker/youtube-cli",
+      "version": "0.1.0",
+      "bin": {
+        "yt-cli": "./bin/yt-cli",
+      },
+    },
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
@@ -186,6 +193,8 @@
     "@growth-hacker/server": ["@growth-hacker/server@workspace:apps/server"],
 
     "@growth-hacker/web": ["@growth-hacker/web@workspace:apps/web"],
+
+    "@growth-hacker/youtube-cli": ["@growth-hacker/youtube-cli@workspace:packages/youtube-cli"],
 
     "@hono/node-server": ["@hono/node-server@1.19.14", "", { "peerDependencies": { "hono": "^4" } }, "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="],
 

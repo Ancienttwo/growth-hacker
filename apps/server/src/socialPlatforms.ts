@@ -87,7 +87,8 @@ const socialPlatformAdapters: SocialPlatformAdapter[] = [
     id: "youtube",
     label: "YouTube",
     shortLabel: "YT",
-    cliMissingMessage: "YouTube CLI adapter is not configured yet.",
+    cliCommand: "yt-cli",
+    cliMissingMessage: "yt-cli not found. Run `bun --silent run yt-cli -- auth status --json` from this repo or link the package bin.",
     capabilities: noCliCapabilities
   }
 ];

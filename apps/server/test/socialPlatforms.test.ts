@@ -13,4 +13,16 @@ describe("social platform adapters", () => {
     expect(isSocialTaskSupported("facebook", "workspace-diagnosis")).toBe(false);
     expect(supportedSocialTaskTypes("youtube")).toEqual([]);
   });
+
+  test("registers yt-cli as the YouTube account adapter command", () => {
+    const youtube = listSocialPlatformAdapters().find((adapter) => adapter.id === "youtube");
+    expect(youtube?.cliCommand).toBe("yt-cli");
+    expect(youtube?.capabilities).toMatchObject({
+      workspace: true,
+      publishedPosts: false,
+      comments: false,
+      autoReplies: false,
+      scheduledTasks: []
+    });
+  });
 });

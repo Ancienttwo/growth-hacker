@@ -161,6 +161,25 @@ export function ensureXhsWorkspaceForAuth(config: AppConfig, auth: XhsAuthStatus
   };
 }
 
+export function createWorkspaceProfile(config: AppConfig, platform: string, profile: string): WorkspaceProfile {
+  assertSafeSegment(platform, "platform");
+  assertSafeSegment(profile, "profile");
+  if (!WORKSPACE_PLATFORMS.includes(platform as (typeof WORKSPACE_PLATFORMS)[number])) {
+    throw new Error(`platform_not_supported:${platform}`);
+  }
+
+  const root = profileRoot(config, platform, profile);
+  mkdirSync(join(root, "artifacts"), { recursive: true });
+  const stat = statSync(root);
+  return {
+    platform,
+    profile,
+    path: root,
+    updatedAt: stat.mtime.toISOString(),
+    artifactCount: countFiles(root)
+  };
+}
+
 export function listArtifacts(config: AppConfig, platform: string, profile: string): ArtifactInfo[] {
   const root = profileRoot(config, platform, profile);
   assertAllowedPath(config, root);

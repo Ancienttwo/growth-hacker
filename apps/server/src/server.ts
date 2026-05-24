@@ -15,6 +15,8 @@ import {
 } from "./chatSessions";
 import { loadConfig } from "./config";
 import { persistHermesGeneratedImageArtifacts, resolveHermesGeneratedImage } from "./hermesImages";
+import { persistHermesGeneratedVideoArtifacts } from "./hermesVideos";
+import { getHermesVideoAuthStatus, startHermesVideoAuth } from "./hermesVideoAuth";
 import { listHermesModelOptions, resolveHermesLlmSelection } from "./hermesModels";
 import {
   approveHermesRun,
@@ -53,6 +55,7 @@ import {
 } from "./socialCron";
 import {
   artifactContentType,
+  createWorkspaceProfile,
   ensureGrowthRoot,
   ensureXhsWorkspaceForAuth,
   isPreviewableArtifact,
@@ -104,6 +107,13 @@ export function createApp() {
   app.get("/api/runtimes/hermes", async (c) => c.json(await getHermesStatus(config)));
 
   app.post("/api/bootstrap/growth-agent", async (c) => c.json(await bootstrapGrowthAgent(config)));
+
+  app.get("/api/hermes/video-auth/status", async (c) => c.json(await getHermesVideoAuthStatus(config)));
+
+  app.post("/api/hermes/video-auth/activate", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { force?: unknown };
+    return c.json(await startHermesVideoAuth(config, jobs, body.force === true), 202);
+  });
 
   app.get("/api/chat/hermes/status", async (c) => c.json(await getHermesChatStatus(config)));
 
@@ -233,7 +243,12 @@ export function createApp() {
       const body = (await c.req.json().catch(() => ({}))) as { platform?: unknown; profile?: unknown };
       if (typeof body.platform !== "string" || typeof body.profile !== "string") throw new Error("workspace_required");
       const run = await getHermesRun(config, c.req.param("id"));
-      return c.json({ artifacts: persistHermesGeneratedImageArtifacts(config, body.platform, body.profile, run.output ?? "") });
+      const output = run.output ?? "";
+      const artifacts = [
+        ...persistHermesGeneratedImageArtifacts(config, body.platform, body.profile, output),
+        ...(await persistHermesGeneratedVideoArtifacts(config, body.platform, body.profile, output))
+      ];
+      return c.json({ artifacts });
     } catch (error) {
       return chatErrorResponse(error, "persist_chat_artifacts_failed");
     }
@@ -291,6 +306,43 @@ export function createApp() {
     const body = (await c.req.json().catch(() => ({}))) as { mode?: "qrcode" | "browser" };
     const job = await startXhsLogin(jobs, body.mode === "browser" ? "browser" : "qrcode");
     return c.json(job, 202);
+  });
+
+  app.post("/api/platforms/:platform/profiles", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+      return c.json({ profile: createWorkspaceProfile(config, c.req.param("platform"), requireBodyString(body.profile, "profile")) }, 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "create_workspace_profile_failed" }, 400);
+    }
+  });
+
+  app.post("/api/platforms/youtube/profiles/:profile/video-runs", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+      const profile = c.req.param("profile");
+      createWorkspaceProfile(config, "youtube", profile);
+      return c.json(
+        await createHermesChatRun(config, {
+          agentId: typeof body.agentId === "string" ? body.agentId : undefined,
+          input: buildYoutubeVideoRunPrompt({
+            prompt: requireBodyString(body.prompt, "prompt"),
+            title: typeof body.title === "string" ? body.title : undefined,
+            aspectRatio: typeof body.aspectRatio === "string" ? body.aspectRatio : undefined,
+            duration: typeof body.duration === "number" ? body.duration : undefined,
+            resolution: typeof body.resolution === "string" ? body.resolution : undefined,
+            imageUrl: typeof body.imageUrl === "string" ? body.imageUrl : undefined
+          }),
+          sessionId: `youtube-video-${profile}`,
+          permissionMode: "ask",
+          reasoningEffort: "high",
+          instructions: buildYoutubeVideoRunInstructions()
+        }),
+        202
+      );
+    } catch (error) {
+      return chatErrorResponse(error, "create_youtube_video_run_failed");
+    }
   });
 
   app.get("/api/platforms/:platform/profiles/:profile/artifacts", (c) => {
@@ -649,6 +701,64 @@ function chatErrorResponse(error: unknown, fallbackMessage: string): Response {
 function requireBodyString(value: unknown, field: string): string {
   if (typeof value === "string" && value.trim()) return value;
   throw new Error(`${field}_required`);
+}
+
+interface YoutubeVideoRunPromptInput {
+  prompt: string;
+  title?: string;
+  aspectRatio?: string;
+  duration?: number;
+  resolution?: string;
+  imageUrl?: string;
+}
+
+function buildYoutubeVideoRunPrompt(input: YoutubeVideoRunPromptInput): string {
+  const toolArgs = {
+    prompt: input.prompt,
+    aspect_ratio: normalizeVideoAspectRatio(input.aspectRatio),
+    duration: normalizeVideoDuration(input.duration),
+    resolution: normalizeVideoResolution(input.resolution),
+    ...(input.imageUrl?.trim() ? { image_url: input.imageUrl.trim() } : {})
+  };
+  return [
+    "Create a YouTube-ready source video asset with Hermes video generation.",
+    "Do not upload to YouTube, do not manage account state, and do not call YouTube APIs.",
+    input.title?.trim() ? `Working title: ${input.title.trim()}` : undefined,
+    "Call the built-in `video_generate` tool exactly once with these JSON arguments:",
+    JSON.stringify(toolArgs, null, 2),
+    "After the tool returns, respond with one compact JSON object only.",
+    "If `video_generate` is unavailable or fails before producing a real video URL/path, set `video` to null. Do not use placeholder strings.",
+    'Required response shape: {"kind":"youtube-video-generation","video":"<real video URL/path or null>","provider":"<provider>","model":"<model>","prompt":"<prompt>","notes":"<short production note>"}'
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildYoutubeVideoRunInstructions(): string {
+  return [
+    "You are running the Growth Hacker YouTube video generation workflow.",
+    "Use the configured Hermes `video_generate` tool. If no backend is configured, surface that exact tool error.",
+    "Do not invent local file paths or URLs.",
+    "Do not upload, publish, comment, like, or mutate any YouTube account state.",
+    "Return only the final JSON object requested by the user prompt."
+  ].join("\n");
+}
+
+function normalizeVideoAspectRatio(value: string | undefined): string {
+  const next = value?.trim();
+  if (next === "16:9" || next === "9:16" || next === "1:1") return next;
+  return "16:9";
+}
+
+function normalizeVideoDuration(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 8;
+  return Math.max(3, Math.min(30, Math.round(value)));
+}
+
+function normalizeVideoResolution(value: string | undefined): string {
+  const next = value?.trim();
+  if (next === "720p" || next === "1080p") return next;
+  return "720p";
 }
 
 function optionalFormString(value: unknown): string | undefined {

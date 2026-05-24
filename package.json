@@ -9,11 +9,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun --filter @growth-hacker/server dev",
+    "dev": "bun scripts/dev-all.ts",
+    "dev:server": "bun --filter @growth-hacker/server dev",
     "dev:web": "bun --filter @growth-hacker/web dev",
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
-    "test": "bun test",
+    "test": "bun test apps packages",
+    "yt-cli": "bun --silent packages/youtube-cli/src/cli.ts",
     "lint": "bun run typecheck"
   },
   "dependencies": {

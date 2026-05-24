@@ -215,6 +215,18 @@ interface HermesChatStatus {
   };
 }
 
+interface HermesVideoAuthStatus {
+  installed: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  pluginEnabled: boolean;
+  apiServerToolEnabled: boolean;
+  provider?: string;
+  model?: string;
+  command?: string;
+  message?: string;
+}
+
 interface HermesChatRunResponse {
   runId: string;
   status: string;
@@ -250,6 +262,19 @@ interface PersistHermesRunArtifactsResponse {
     size: number;
     contentType: string;
   }>;
+}
+
+interface WorkspaceProfileResponse {
+  profile: WorkspaceProfile;
+}
+
+interface YoutubeVideoDraft {
+  title: string;
+  prompt: string;
+  aspectRatio: "16:9" | "9:16" | "1:1";
+  duration: number;
+  resolution: "720p" | "1080p";
+  imageUrl: string;
 }
 
 interface HermesChatRunOptions {
@@ -513,6 +538,14 @@ const chatDefaultSessionTitle = "New session";
 const chatSessionLimit = 24;
 const chatSessionsStorageKey = "growth-hacker.chatSessions";
 const activeChatSessionStorageKey = "growth-hacker.activeChatSessionId";
+const defaultYoutubeVideoDraft: YoutubeVideoDraft = {
+  title: "",
+  prompt: "",
+  aspectRatio: "16:9",
+  duration: 8,
+  resolution: "720p",
+  imageUrl: ""
+};
 const chatSessionSaveQueues = new Map<string, Promise<void>>();
 const chatSessionSaveVersions = new Map<string, number>();
 const chatModelContextWindows: Record<string, number> = {
@@ -573,6 +606,8 @@ export function App() {
   const [autoReplySettings, setAutoReplySettings] = useState<XhsAutoReplySettings>(defaultAutoReplySettings);
   const [autoReplyNotice, setAutoReplyNotice] = useState<string | null>(null);
   const [hermesChatStatus, setHermesChatStatus] = useState<HermesChatStatus | null>(null);
+  const [hermesVideoAuth, setHermesVideoAuth] = useState<HermesVideoAuthStatus | null>(null);
+  const [hermesVideoAuthUrl, setHermesVideoAuthUrl] = useState<string | null>(null);
   const [hermesModelOptions, setHermesModelOptions] = useState<HermesModelOptions>(fallbackHermesModelOptions);
   const [hermesSkills, setHermesSkills] = useState<HermesSkillInfo[]>([]);
   const [hermesContext, setHermesContext] = useState<HermesContextSnapshot | null>(null);
@@ -587,6 +622,10 @@ export function App() {
   const [chatComposerMode, setChatComposerMode] = useState<ChatComposerMode>(null);
   const [queuedChatSteers, setQueuedChatSteers] = useState<QueuedChatSteer[]>([]);
   const queuedChatSteersRef = useRef<QueuedChatSteer[]>([]);
+  const [newWorkspaceProfileName, setNewWorkspaceProfileName] = useState("astrozi");
+  const [youtubeVideoDraft, setYoutubeVideoDraft] = useState<YoutubeVideoDraft>(defaultYoutubeVideoDraft);
+  const [youtubeVideoNotice, setYoutubeVideoNotice] = useState<string | null>(null);
+  const [activeYoutubeVideoRunId, setActiveYoutubeVideoRunId] = useState<string | null>(null);
   const [socialCronTaskTypes, setSocialCronTaskTypes] = useState<SocialCronTaskType[]>(defaultSocialCronTaskTypes);
   const [socialCronTaskType, setSocialCronTaskType] = useState<SocialCronTaskType>("workspace-diagnosis");
   const [socialCronSchedule, setSocialCronSchedule] = useState("daily 09:00");
@@ -604,6 +643,7 @@ export function App() {
   const [skillSearch, setSkillSearch] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
+  const youtubeVideoAbortRef = useRef<AbortController | null>(null);
   const recoveringRunIdsRef = useRef<Set<string>>(new Set());
 
   const refresh = async () => {
@@ -618,7 +658,8 @@ export function App() {
       socialCalendarPayload,
       hermesModelsPayload,
       hermesContextPayload,
-      chatStatusPayload
+      chatStatusPayload,
+      hermesVideoAuthPayload
     ] = await Promise.all([
       api<WorkspacesResponse>("/api/workspaces"),
       api<RuntimeResponse>("/api/runtimes"),
@@ -635,7 +676,8 @@ export function App() {
       api<SocialCalendarResponse>("/api/social-calendar/items").catch(() => ({ items: [] })),
       api<HermesModelOptions>("/api/hermes/models").catch(() => fallbackHermesModelOptions),
       api<HermesContextResponse>("/api/hermes/context").catch(() => null),
-      getHermesChatStatus()
+      getHermesChatStatus(),
+      api<HermesVideoAuthStatus>("/api/hermes/video-auth/status").catch(() => null)
     ]);
     setProfiles(workspacePayload.profiles);
     setRuntimes(runtimePayload.runtimes);
@@ -650,6 +692,7 @@ export function App() {
     setHermesModelOptions(hermesModelsPayload.models.length ? hermesModelsPayload : fallbackHermesModelOptions);
     setHermesContext(hermesContextPayload);
     setHermesChatStatus(chatStatusPayload);
+    setHermesVideoAuth(hermesVideoAuthPayload);
     setSocialCronTaskTypes(socialCronPayload.taskTypes.length ? socialCronPayload.taskTypes : defaultSocialCronTaskTypes);
     setActivePlatform((current) => normalizePlatformMode(current, platformsPayload.platforms.length ? platformsPayload.platforms : fallbackSocialPlatforms));
   };
@@ -689,16 +732,7 @@ export function App() {
     setExpandedDirectories(new Set());
     setPublishedSyncNotice(null);
     setAutoReplyNotice(null);
-    void api<{ artifacts: ArtifactInfo[] }>(
-      `/api/platforms/${encodeURIComponent(selectedProfile.platform)}/profiles/${encodeURIComponent(selectedProfile.profile)}/artifacts`
-    ).then((payload) => {
-      setArtifacts(payload.artifacts);
-      const first =
-        payload.artifacts.find((item) => item.kind === "file" && item.path === "01-client-brief.md") ??
-        payload.artifacts.find((item) => item.kind === "file" && !item.path.includes("/")) ??
-        payload.artifacts.find((item) => item.kind === "file");
-      if (first) void openArtifact(first);
-    });
+    void reloadProfileArtifacts(selectedProfile);
     if (selectedProfile.platform === "xiaohongshu") {
       void reloadPublishedPosts(selectedProfile.profile);
       void reloadAutoReplies(selectedProfile.profile);
@@ -900,8 +934,31 @@ export function App() {
     });
   }
 
+  async function reloadProfileArtifacts(profile = selectedProfile, preferredPath = selectedArtifact?.artifact.path): Promise<ArtifactInfo[]> {
+    if (!profile) {
+      setArtifacts([]);
+      setSelectedArtifact(null);
+      return [];
+    }
+    const payload = await api<{ artifacts: ArtifactInfo[] }>(
+      `/api/platforms/${encodeURIComponent(profile.platform)}/profiles/${encodeURIComponent(profile.profile)}/artifacts`
+    );
+    setArtifacts(payload.artifacts);
+    const first =
+      (preferredPath ? payload.artifacts.find((item) => item.kind === "file" && item.path === preferredPath) : undefined) ??
+      payload.artifacts.find((item) => item.kind === "file" && item.path === "01-client-brief.md") ??
+      payload.artifacts.find((item) => item.kind === "file" && !item.path.includes("/")) ??
+      payload.artifacts.find((item) => item.kind === "file");
+    if (first) {
+      await openArtifact(first);
+    } else {
+      setSelectedArtifact(null);
+    }
+    return payload.artifacts;
+  }
+
   async function openArtifact(artifact: ArtifactInfo) {
-    if (!selectedProfile || artifact.kind !== "file") return;
+    if (artifact.kind !== "file") return;
     const payload = await api<ArtifactContent>(
       `/api/platforms/${encodeURIComponent(artifact.platform)}/profiles/${encodeURIComponent(
         artifact.profile
@@ -996,6 +1053,31 @@ export function App() {
         source.close();
         setBusy(null);
       };
+    } catch {
+      setBusy(null);
+    }
+  }
+
+  async function activateHermesVideoAuth() {
+    setBusy("hermes-video-auth");
+    setHermesVideoAuthUrl(null);
+    try {
+      const job = await api<JobSnapshot>("/api/hermes/video-auth/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      watchJob(
+        job,
+        () => {
+          setBusy(null);
+          void refresh();
+        },
+        (next) => {
+          const url = extractOAuthUrlFromJob(next);
+          if (url) setHermesVideoAuthUrl(url);
+        }
+      );
     } catch {
       setBusy(null);
     }
@@ -1170,6 +1252,89 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function createWorkspaceProfileFromUi() {
+    const profileName = newWorkspaceProfileName.trim();
+    if (!profileName) return;
+    setBusy("workspace-profile-create");
+    setYoutubeVideoNotice(null);
+    try {
+      const payload = await api<WorkspaceProfileResponse>(`/api/platforms/${encodeURIComponent(activePlatform)}/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: profileName })
+      });
+      setProfiles((current) => {
+        const withoutDuplicate = current.filter((profile) => !isSameWorkspace(profile, payload.profile));
+        return [...withoutDuplicate, payload.profile].sort((a, b) => `${a.platform}/${a.profile}`.localeCompare(`${b.platform}/${b.profile}`));
+      });
+      setSelectedProfilesByPlatform((current) => ({ ...current, [payload.profile.platform as PlatformId]: payload.profile }));
+      setSelectedProfile(payload.profile);
+      await reloadProfileArtifacts(payload.profile, "");
+      setYoutubeVideoNotice(t("youtube.profileReady", { profile: payload.profile.profile }));
+    } catch (error) {
+      setYoutubeVideoNotice(error instanceof Error ? error.message : t("youtube.profileCreateFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function startYoutubeVideoRun() {
+    if (!selectedProfile || selectedProfile.platform !== "youtube" || !youtubeVideoDraft.prompt.trim()) return;
+    setBusy("youtube-video-run");
+    setYoutubeVideoNotice(t("youtube.runStarted"));
+    const controller = new AbortController();
+    youtubeVideoAbortRef.current = controller;
+    let runId: string | null = null;
+    try {
+      const run = await api<HermesChatRunResponse>(
+        `/api/platforms/youtube/profiles/${encodeURIComponent(selectedProfile.profile)}/video-runs`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...youtubeVideoDraft,
+            agentId: selectedSocialAgent?.id ?? socialCronAgentId
+          })
+        }
+      );
+      runId = run.runId;
+      setActiveYoutubeVideoRunId(run.runId);
+      const terminalEvent = await waitForHermesRunTerminal(run.runId, controller.signal);
+      if (!terminalEvent) return;
+      if (terminalEvent.event !== "run.completed") {
+        setYoutubeVideoNotice(eventErrorMessage(terminalEvent, t("youtube.runFailed")));
+        return;
+      }
+      const persisted = await api<PersistHermesRunArtifactsResponse>(`/api/chat/runs/${encodeURIComponent(run.runId)}/artifacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: selectedProfile.platform, profile: selectedProfile.profile })
+      });
+      const videoArtifact = persisted.artifacts.find((artifact) => artifact.contentType.startsWith("video/"));
+      await reloadProfileArtifacts(selectedProfile, videoArtifact?.path);
+      setYoutubeVideoNotice(
+        videoArtifact ? t("youtube.runSuccess", { path: videoArtifact.path }) : t("youtube.runCompletedNoVideo")
+      );
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setYoutubeVideoNotice(error instanceof Error ? error.message : t("youtube.runFailed"));
+      }
+    } finally {
+      setActiveYoutubeVideoRunId((current) => (!runId || current === runId ? null : current));
+      setBusy((current) => (current === "youtube-video-run" ? null : current));
+      if (youtubeVideoAbortRef.current === controller) youtubeVideoAbortRef.current = null;
+    }
+  }
+
+  async function stopYoutubeVideoRun() {
+    if (!activeYoutubeVideoRunId) return;
+    await stopHermesRun(activeYoutubeVideoRunId).catch(() => undefined);
+    youtubeVideoAbortRef.current?.abort();
+    setActiveYoutubeVideoRunId(null);
+    setBusy((current) => (current === "youtube-video-run" ? null : current));
+    setYoutubeVideoNotice(t("youtube.runStopped"));
   }
 
   async function reloadHermesSkills(agentId = selectedSocialAgent?.id): Promise<HermesSkillInfo[]> {
@@ -1373,12 +1538,14 @@ export function App() {
     }
   }
 
-  function watchJob(job: JobSnapshot, onDone?: () => void) {
+  function watchJob(job: JobSnapshot, onDone?: () => void, onUpdate?: (job: JobSnapshot) => void) {
     setSelectedJob(job);
+    onUpdate?.(job);
     const source = new EventSource(`/api/jobs/${job.id}/events`);
     source.onmessage = (event) => {
       const next = JSON.parse(event.data) as JobSnapshot;
       setSelectedJob(next);
+      onUpdate?.(next);
       if (next.status === "succeeded" || next.status === "failed") {
         source.close();
         onDone?.();
@@ -2021,7 +2188,21 @@ export function App() {
           <ScrollArea className="main-scroll">
             <div className={cn("main-content", activeView === "chat" && "main-content-chat", activeView === "knowledge" && "main-content-knowledge")}>
               {activeView === "workspace" ? (
-                <WorkspaceView selectedArtifact={selectedArtifact} selectedProfile={selectedProfile} />
+                <WorkspaceView
+                  activePlatform={activePlatform}
+                  activeRunId={activeYoutubeVideoRunId}
+                  busy={busy}
+                  newProfileName={newWorkspaceProfileName}
+                  notice={youtubeVideoNotice}
+                  onCreateProfile={() => void createWorkspaceProfileFromUi()}
+                  onGenerateVideo={() => void startYoutubeVideoRun()}
+                  onNewProfileNameChange={setNewWorkspaceProfileName}
+                  onStopVideo={() => void stopYoutubeVideoRun()}
+                  onVideoDraftChange={setYoutubeVideoDraft}
+                  selectedArtifact={selectedArtifact}
+                  selectedProfile={selectedProfile}
+                  videoDraft={youtubeVideoDraft}
+                />
               ) : null}
 
               {activeView === "knowledge" ? (
@@ -2184,10 +2365,16 @@ export function App() {
                   auth={auth}
                   busy={busy}
                   hermes={hermes}
+                  hermesVideoAuth={hermesVideoAuth}
+                  hermesVideoAuthUrl={hermesVideoAuthUrl}
                   job={selectedRuntimeJob}
                   migration={migration}
+                  onActivateHermesVideoAuth={() => void activateHermesVideoAuth()}
                   onBootstrap={() => void bootstrap()}
                   onLogin={(mode) => void login(mode)}
+                  onOpenHermesVideoAuthUrl={() => {
+                    if (hermesVideoAuthUrl) window.open(hermesVideoAuthUrl, "_blank", "noopener,noreferrer");
+                  }}
                   onRunMigration={() => void runMigration()}
                   openclaw={openclaw}
                 />
@@ -3134,10 +3321,173 @@ function KnowledgeView({
   );
 }
 
-function WorkspaceView({ selectedArtifact, selectedProfile }: { selectedArtifact: ArtifactContent | null; selectedProfile: WorkspaceProfile | null }) {
+function YoutubeVideoWorkbench({
+  activeRunId,
+  busy,
+  draft,
+  newProfileName,
+  notice,
+  onCreateProfile,
+  onDraftChange,
+  onGenerate,
+  onNewProfileNameChange,
+  onStop,
+  selectedProfile
+}: {
+  activeRunId: string | null;
+  busy: string | null;
+  draft: YoutubeVideoDraft;
+  newProfileName: string;
+  notice: string | null;
+  onCreateProfile: () => void;
+  onDraftChange: (value: YoutubeVideoDraft) => void;
+  onGenerate: () => void;
+  onNewProfileNameChange: (value: string) => void;
+  onStop: () => void;
+  selectedProfile: WorkspaceProfile | null;
+}) {
+  const { t } = useI18n();
+  const runActive = Boolean(activeRunId) || busy === "youtube-video-run";
+  const profileReady = selectedProfile?.platform === "youtube";
+  return (
+    <Card className="youtube-video-panel">
+      <CardHeader className="youtube-video-header">
+        <div className="min-w-0">
+          <CardTitle>{t("youtube.videoStudio")}</CardTitle>
+          <CardDescription>{profileReady ? `youtube/${selectedProfile.profile}` : t("youtube.noProfile")}</CardDescription>
+        </div>
+        {runActive ? <StatusBadge state="warn" label={activeRunId ?? "running"} /> : <StatusBadge state="ok" label={t("common.ready")} />}
+      </CardHeader>
+      <CardContent className="youtube-video-body">
+        {!profileReady ? (
+          <div className="youtube-profile-create">
+            <Input
+              aria-label={t("youtube.profileName")}
+              onChange={(event) => onNewProfileNameChange(event.target.value)}
+              placeholder="astrozi"
+              value={newProfileName}
+            />
+            <Button disabled={busy === "workspace-profile-create" || !newProfileName.trim()} onClick={onCreateProfile} type="button">
+              {busy === "workspace-profile-create" ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              {t("youtube.createProfile")}
+            </Button>
+          </div>
+        ) : (
+          <div className="youtube-video-form">
+            <Input
+              aria-label={t("youtube.title")}
+              onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
+              placeholder={t("youtube.titlePlaceholder")}
+              value={draft.title}
+            />
+            <Textarea
+              aria-label={t("youtube.prompt")}
+              className="youtube-video-prompt"
+              onChange={(event) => onDraftChange({ ...draft, prompt: event.target.value })}
+              placeholder={t("youtube.promptPlaceholder")}
+              value={draft.prompt}
+            />
+            <div className="youtube-video-controls">
+              <Select onValueChange={(value) => onDraftChange({ ...draft, aspectRatio: value as YoutubeVideoDraft["aspectRatio"] })} value={draft.aspectRatio}>
+                <SelectTrigger>
+                  <Video className="size-3.5" />
+                  <SelectValue placeholder={t("youtube.aspectRatio")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="16:9">16:9</SelectItem>
+                  <SelectItem value="9:16">9:16</SelectItem>
+                  <SelectItem value="1:1">1:1</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                aria-label={t("youtube.duration")}
+                max={30}
+                min={3}
+                onChange={(event) => onDraftChange({ ...draft, duration: Number(event.target.value) })}
+                type="number"
+                value={draft.duration}
+              />
+              <Select onValueChange={(value) => onDraftChange({ ...draft, resolution: value as YoutubeVideoDraft["resolution"] })} value={draft.resolution}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t("youtube.resolution")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="720p">720p</SelectItem>
+                  <SelectItem value="1080p">1080p</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Input
+              aria-label={t("youtube.imageUrl")}
+              onChange={(event) => onDraftChange({ ...draft, imageUrl: event.target.value })}
+              placeholder={t("youtube.imageUrlPlaceholder")}
+              value={draft.imageUrl}
+            />
+            <div className="youtube-video-actions">
+              <Button disabled={runActive || !draft.prompt.trim()} onClick={onGenerate} type="button">
+                {runActive ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+                {t("youtube.generate")}
+              </Button>
+              <Button disabled={!activeRunId} onClick={onStop} type="button" variant="outline">
+                <Square className="size-4" />
+                {t("chat.stopRun")}
+              </Button>
+              {notice ? <span className="youtube-video-notice">{notice}</span> : null}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WorkspaceView({
+  activePlatform,
+  activeRunId,
+  busy,
+  newProfileName,
+  notice,
+  onCreateProfile,
+  onGenerateVideo,
+  onNewProfileNameChange,
+  onStopVideo,
+  onVideoDraftChange,
+  selectedArtifact,
+  selectedProfile,
+  videoDraft
+}: {
+  activePlatform: PlatformId;
+  activeRunId: string | null;
+  busy: string | null;
+  newProfileName: string;
+  notice: string | null;
+  onCreateProfile: () => void;
+  onGenerateVideo: () => void;
+  onNewProfileNameChange: (value: string) => void;
+  onStopVideo: () => void;
+  onVideoDraftChange: (value: YoutubeVideoDraft) => void;
+  selectedArtifact: ArtifactContent | null;
+  selectedProfile: WorkspaceProfile | null;
+  videoDraft: YoutubeVideoDraft;
+}) {
   const { t } = useI18n();
   return (
-    <div className="workspace-view">
+    <div className="workspace-view workspace-stack">
+      {activePlatform === "youtube" ? (
+        <YoutubeVideoWorkbench
+          activeRunId={activeRunId}
+          busy={busy}
+          draft={videoDraft}
+          newProfileName={newProfileName}
+          notice={notice}
+          onCreateProfile={onCreateProfile}
+          onDraftChange={onVideoDraftChange}
+          onGenerate={onGenerateVideo}
+          onNewProfileNameChange={onNewProfileNameChange}
+          onStop={onStopVideo}
+          selectedProfile={selectedProfile}
+        />
+      ) : null}
       <Card className="workspace-card">
         <CardHeader className="border-b">
           <CardTitle>{selectedArtifact?.artifact.path ?? selectedProfile?.profile ?? t("workspace.title")}</CardTitle>
@@ -5185,24 +5535,37 @@ function JobLogPanel({
   );
 }
 
+function extractOAuthUrlFromJob(job: JobSnapshot): string | null {
+  const match = job.logs.join("\n").match(/https?:\/\/[^\s<>"']+/);
+  return match?.[0]?.replace(/[),.;]+$/, "") ?? null;
+}
+
 function SetupView({
   auth,
   busy,
   hermes,
+  hermesVideoAuth,
+  hermesVideoAuthUrl,
   job,
   migration,
+  onActivateHermesVideoAuth,
   onBootstrap,
   onLogin,
+  onOpenHermesVideoAuthUrl,
   onRunMigration,
   openclaw
 }: {
   auth: XhsAuthStatus | null;
   busy: string | null;
   hermes?: RuntimeStatus;
+  hermesVideoAuth: HermesVideoAuthStatus | null;
+  hermesVideoAuthUrl: string | null;
   job: JobSnapshot | null;
   migration: MigrationPlan | null;
+  onActivateHermesVideoAuth: () => void;
   onBootstrap: () => void;
   onLogin: (mode: "qrcode" | "browser") => void;
+  onOpenHermesVideoAuthUrl: () => void;
   onRunMigration: () => void;
   openclaw?: RuntimeStatus;
 }) {
@@ -5223,6 +5586,47 @@ function SetupView({
             {busy === "bootstrap" ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
             Bootstrap
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>{t("setup.grokVideo")}</CardTitle>
+          <CardDescription>{t("setup.grokVideoDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="metric-row">
+            <span>{t("setup.state")}</span>
+            <StatusBadge
+              state={hermesVideoAuth?.configured ? "ok" : hermesVideoAuth?.installed === false ? "bad" : "warn"}
+              label={hermesVideoAuth?.configured ? t("common.ready") : t("common.missing")}
+            />
+          </div>
+          <MetricRow label="Hermes" value={hermesVideoAuth?.installed ? t("common.installed") : t("common.missing")} />
+          <MetricRow label={t("setup.xaiOauth")} value={hermesVideoAuth?.authenticated ? t("common.ready") : t("common.missing")} />
+          <MetricRow
+            label={t("setup.apiServerTool")}
+            value={hermesVideoAuth?.apiServerToolEnabled ? t("common.enabled") : t("common.missing")}
+          />
+          <MetricRow
+            label={t("setup.providerModel")}
+            value={[hermesVideoAuth?.provider, hermesVideoAuth?.model].filter(Boolean).join(" / ") || t("common.missing")}
+          />
+          {hermesVideoAuth?.message ? <p className="text-xs leading-relaxed text-muted-foreground">{hermesVideoAuth.message}</p> : null}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button
+              disabled={busy === "hermes-video-auth" || hermesVideoAuth?.installed === false}
+              onClick={onActivateHermesVideoAuth}
+              type="button"
+            >
+              {busy === "hermes-video-auth" ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+              {hermesVideoAuth?.configured ? t("setup.refreshGrokAuth") : t("setup.activateGrokVideo")}
+            </Button>
+            <Button disabled={!hermesVideoAuthUrl} onClick={onOpenHermesVideoAuthUrl} type="button" variant="outline">
+              <ExternalLink className="size-4" />
+              {t("setup.openAuthUrl")}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -6038,6 +6442,13 @@ function runStatusToTerminalEvent(status: HermesChatRunStatus): HermesChatEvent 
     };
   }
   return null;
+}
+
+function eventErrorMessage(event: HermesChatEvent, fallback: string): string {
+  if (typeof event.error === "string") return event.error;
+  if (isRecord(event.error) && typeof event.error.message === "string") return event.error.message;
+  if (typeof event.output === "string" && event.output.trim()) return event.output.trim();
+  return fallback;
 }
 
 function hermesLlmValue(selection: HermesLlmSelection): string {

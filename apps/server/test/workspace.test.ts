@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import type { AppConfig } from "../src/config";
 import {
   artifactContentType,
+  createWorkspaceProfile,
   ensureXhsWorkspaceForAuth,
   listArtifacts,
   listVaultArtifacts,
@@ -126,6 +127,19 @@ describe("workspace artifact access", () => {
       "astrozi/xiaohongshu",
       "astrozi/youtube"
     ]);
+  });
+
+  test("creates a generic workspace profile for configured platforms", () => {
+    const appConfig = config();
+    const workspace = createWorkspaceProfile(appConfig, "youtube", "astrozi");
+
+    expect(workspace).toMatchObject({
+      platform: "youtube",
+      profile: "astrozi",
+      artifactCount: 0
+    });
+    expect(listWorkspaces(appConfig).map((profile) => `${profile.platform}/${profile.profile}`)).toEqual(["youtube/astrozi"]);
+    expect(() => createWorkspaceProfile(appConfig, "unknown", "astrozi")).toThrow("platform_not_supported:unknown");
   });
 
   test("repairs legacy platform-first workspaces into the canonical layout", () => {

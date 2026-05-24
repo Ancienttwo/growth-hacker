@@ -578,6 +578,70 @@ pre {
   min-height: calc(100vh - 104px);
 }
 
+.workspace-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.workspace-stack .workspace-card {
+  min-height: 520px;
+}
+
+.youtube-video-panel {
+  overflow: hidden;
+}
+
+.youtube-video-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.youtube-video-body {
+  display: grid;
+  gap: 12px;
+}
+
+.youtube-profile-create {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 10px;
+}
+
+.youtube-video-form {
+  display: grid;
+  gap: 10px;
+}
+
+.youtube-video-prompt {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.youtube-video-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(88px, 0.55fr) minmax(112px, 0.65fr);
+  gap: 10px;
+}
+
+.youtube-video-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.youtube-video-notice {
+  min-width: 180px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .knowledge-workbench {
   display: grid;
   height: 100%;
@@ -2775,6 +2839,11 @@ pre {
 }
 
 @media (max-width: 1180px) {
+  .youtube-video-controls,
+  .youtube-profile-create {
+    grid-template-columns: 1fr;
+  }
+
   .knowledge-workbench {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(420px, 1fr) minmax(420px, 1fr);

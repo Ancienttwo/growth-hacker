@@ -20,7 +20,14 @@ bun install
 bun run dev
 ```
 
-The API server defaults to `http://localhost:8787`; the React UI is served by the same server in production builds and by Vite during frontend development.
+`bun run dev` starts both local processes:
+
+- Dashboard API: `http://127.0.0.1:8787`
+- React/Vite UI: `http://127.0.0.1:5177`
+
+Use `bun run dev:server` for the API only, or `bun run dev:web` for the Vite UI only. The React UI is served by the same server in production builds and by Vite during frontend development.
+
+To move the local API port, run `PORT=8877 bun run dev`. The unified dev script passes the same target to the Vite proxy. If the API is already running elsewhere, set `DASHBOARD_API_BASE_URL=http://127.0.0.1:<port>` before starting `bun run dev:web`.
 
 ## Hermes Chat
 
