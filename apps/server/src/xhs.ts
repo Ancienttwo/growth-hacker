@@ -38,6 +38,13 @@ export async function startXhsLogin(jobStore: JobStore, mode: "qrcode" | "browse
   return jobStore.startTask(`xhs-login-${mode}`, [xhs, ...args], async (log) => {
     const previousAuth = await readXhsGlobalAuthStatus(xhs, "status");
     const backupPath = previousAuth.authenticated ? backupGlobalAuthCookie() : undefined;
+    let restoredBackup = false;
+    const restorePreviousAuth = (message: string) => {
+      if (!backupPath || restoredBackup) return;
+      restoreGlobalAuthCookie(backupPath);
+      restoredBackup = true;
+      log(message);
+    };
     if (backupPath) log("stdout: preserved existing signed-in global XHS auth before login");
 
     try {
@@ -47,6 +54,14 @@ export async function startXhsLogin(jobStore: JobStore, mode: "qrcode" | "browse
       });
 
       if (result.exitCode !== 0) {
+        if (mode === "browser" && previousAuth.authenticated) {
+          restorePreviousAuth("stderr: restored previous signed-in global XHS auth after browser cookie import failed");
+          const status = await waitForSignedInGlobalAuth(xhs, log);
+          if (status.authenticated) {
+            log(`stdout: browser cookie import unavailable; existing global XHS auth verified${status.nickname ? `: ${status.nickname}` : ""}`);
+            return;
+          }
+        }
         throw new Error(result.stderr || result.stdout || result.error || "xhs login failed");
       }
 
@@ -57,10 +72,7 @@ export async function startXhsLogin(jobStore: JobStore, mode: "qrcode" | "browse
       }
       log(`stdout: global XHS auth verified${status.nickname ? `: ${status.nickname}` : ""}`);
     } catch (error) {
-      if (backupPath) {
-        restoreGlobalAuthCookie(backupPath);
-        log("stderr: restored previous signed-in global XHS auth after failed verification");
-      }
+      restorePreviousAuth("stderr: restored previous signed-in global XHS auth after failed verification");
       throw error;
     } finally {
       cleanupGlobalAuthBackup(backupPath);

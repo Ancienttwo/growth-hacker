@@ -9,3 +9,44 @@ _ref/
 .env
 .env.local
 growth-hacker.config.json
+# Project-specific
+artifacts/
+*.tar.gz
+*.tgz
+# External references
+# Local operations state
+_ops/
+# Environment
+.env.*
+!.env.example
+# OS metadata
+
+# BEGIN: claude-runtime-temp (managed by project-initializer)
+.claude/settings.local.json
+.claude/.atomic_pending
+.claude/.session-id
+.claude/.trace.jsonl
+.claude/.tool-call-count
+.claude/.session-handoff.md
+.claude/.task-state.json
+.claude/.task-handoff.md
+.claude/.context-pressure/
+.claude/*.tmp
+.claude/*.bak
+.claude/*.bak.*
+.claude/*.backup-*
+.ai/harness/checks/latest.json
+.ai/harness/events.jsonl
+.ai/harness/failures/latest.jsonl
+.ai/harness/handoff/current.md
+.ai/harness/handoff/resume.md
+.ai/harness/context-budget/latest.json
+.ai/harness/architecture/events.jsonl
+.ai/harness/worktrees/
+.ai/harness/runs/
+.codex/*
+!.codex/
+!.codex/hooks.json
+.claude/.active-plan
+.claude/.plan-state/
+# END: claude-runtime-temp

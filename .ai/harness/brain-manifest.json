@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "project": "growth-hacker",
+  "mode": "repo-contract-external-knowledge",
+  "default_brain_path": "icloud/brain/<project>/*",
+  "legacy_paths": [],
+  "rules": [
+    "repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
+    "default brain stores long-lived explanations, runbooks, decisions, references, and patterns",
+    "hook runtime must not query gbrain, iCloud, MCP, or default brain"
+  ],
+  "entries": []
+}

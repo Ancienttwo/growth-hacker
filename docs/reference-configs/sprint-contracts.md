@@ -1,0 +1,32 @@
+# Sprint Contracts
+
+Sprint contracts are the repo-local agreement between planner, generator, and evaluator.
+
+## Required Sections
+
+- Goal
+- Scope and non-goals
+- Allowed paths
+- Exit criteria
+- Verification commands
+- Risks and rollback point
+
+## Status Rules
+
+- `Pending`: drafted but not approved for execution
+- `Active`: approved for implementation
+- `Blocked`: waiting on a missing dependency or decision
+- `Verified`: all machine checks passed; awaiting or holding review
+- `Archived`: sprint is complete or superseded
+
+## Review Coupling
+
+- A contract is not truly done until the matching review file records a passing recommendation.
+- `tasks/reviews/<slug>.review.md` should cite the contract, implementation notes, checks file, run snapshot, and any manual observations.
+- `tasks/notes/<slug>.notes.md` captures task-local decisions and should be archived or promoted deliberately, not left as hidden long-term memory.
+
+## Worktree Lifecycle
+
+- When `.ai/harness/policy.json` has `worktree_strategy.auto_for_contract_tasks: true`, `scripts/plan-to-todo.sh --plan <approved-plan>` starts a linked `codex/<slug>` worktree instead of mutating the primary tree.
+- Execute the sprint in that linked worktree. The primary worktree remains a merge target and must stay clean before merge-back.
+- After implementation, run Waza `/check` so the review file recommends pass, then run `scripts/contract-worktree.sh finish`. The finish command runs `verify-sprint.sh`, commits the branch, and fast-forwards the target branch only when the target worktree is clean.

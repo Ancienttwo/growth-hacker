@@ -17,7 +17,12 @@
     "test": "bun test apps packages",
     "yt-cli": "bun --silent packages/youtube-cli/src/cli.ts",
     "yt-cli:live-smoke": "bun scripts/youtube-cli-live-smoke.ts",
-    "lint": "bun run typecheck"
+    "lint": "bun run typecheck",
+    "check:brain-manifest": "bash scripts/check-brain-manifest.sh",
+    "check:context-files": "bash scripts/check-context-files.sh",
+    "check:deploy-sql": "bash scripts/check-deploy-sql-order.sh",
+    "check:task-sync": "bash scripts/check-task-sync.sh",
+    "check:task-workflow": "bash scripts/check-task-workflow.sh --strict"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",

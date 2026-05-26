@@ -9,6 +9,7 @@ import { JobStore } from "../src/jobs";
 import { getXhsAuthStatus, startXhsLogin } from "../src/xhs";
 
 const originalEnv = {
+  FAKE_XHS_LOGIN_FAIL: process.env.FAKE_XHS_LOGIN_FAIL,
   FAKE_XHS_STATUS: process.env.FAKE_XHS_STATUS,
   FAKE_XHS_WRITE_COOKIE: process.env.FAKE_XHS_WRITE_COOKIE,
   FAKE_XHS_WHOAMI: process.env.FAKE_XHS_WHOAMI,
@@ -19,6 +20,7 @@ const originalEnv = {
 };
 
 afterEach(() => {
+  restoreEnv("FAKE_XHS_LOGIN_FAIL", originalEnv.FAKE_XHS_LOGIN_FAIL);
   restoreEnv("FAKE_XHS_STATUS", originalEnv.FAKE_XHS_STATUS);
   restoreEnv("FAKE_XHS_WRITE_COOKIE", originalEnv.FAKE_XHS_WRITE_COOKIE);
   restoreEnv("FAKE_XHS_WHOAMI", originalEnv.FAKE_XHS_WHOAMI);
@@ -93,6 +95,28 @@ describe("XHS global auth", () => {
     expect(readFileSync(cookiePath, "utf8")).toBe("previous-valid-cookie");
     expect(finished.logs.join("\n")).toContain("restored previous signed-in global XHS auth");
   });
+
+  test("keeps Settings browser login green when browser import fails but global auth is valid", async () => {
+    installFakeXhs();
+    const root = mkdtempSync(join(tmpdir(), "growth-hacker-xhs-cookie-"));
+    const cookiePath = join(root, "cookies.json");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(cookiePath, "previous-valid-cookie");
+    process.env.FAKE_XHS_LOGIN_FAIL = "1";
+    process.env.FAKE_XHS_STATUS = "real";
+    process.env.FAKE_XHS_WHOAMI = "real";
+    process.env.XHS_AUTH_CHECK_ATTEMPTS = "1";
+    process.env.XHS_AUTH_COOKIE_PATH = cookiePath;
+
+    const store = new JobStore();
+    const job = await startXhsLogin(store, "browser");
+    const finished = await waitForJob(store, job.id);
+
+    expect(finished.status).toBe("succeeded");
+    expect(finished.exitCode).toBe(0);
+    expect(readFileSync(cookiePath, "utf8")).toBe("previous-valid-cookie");
+    expect(finished.logs.join("\n")).toContain("browser cookie import unavailable; existing global XHS auth verified: Real User");
+  });
 });
 
 function installFakeXhs() {
@@ -105,6 +129,10 @@ set -euo pipefail
 cmd="\${1:-}"
 case "$cmd" in
   login)
+    if [[ -n "\${FAKE_XHS_LOGIN_FAIL:-}" ]]; then
+      echo '{"ok":false,"schema_version":"1","error":{"code":"not_authenticated","message":"Login verification failed: No '\\''a1'\\'' cookie found for xiaohongshu.com in any installed browser."}}'
+      exit 1
+    fi
     if [[ -n "\${FAKE_XHS_WRITE_COOKIE:-}" && -n "\${XHS_AUTH_COOKIE_PATH:-}" ]]; then
       printf 'partial-cookie' > "\${XHS_AUTH_COOKIE_PATH}"
     fi
