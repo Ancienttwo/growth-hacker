@@ -77,6 +77,7 @@ import {
   updateXhsAutoReplySettings
 } from "./xhsAutoReplies";
 import { listXhsPublishedPosts, refreshXhsPublishedPostsFromCli, toPublicXhsPublishedPost, updateXhsPublishedPost } from "./xhsPublished";
+import { getYoutubeProfileStatus } from "./youtubeCli";
 
 export function createApp() {
   const config = loadConfig();
@@ -342,6 +343,14 @@ export function createApp() {
       );
     } catch (error) {
       return chatErrorResponse(error, "create_youtube_video_run_failed");
+    }
+  });
+
+  app.get("/api/platforms/youtube/profiles/:profile/status", async (c) => {
+    try {
+      return c.json(await getYoutubeProfileStatus(config, c.req.param("profile")));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "youtube_profile_status_failed" }, 400);
     }
   });
 

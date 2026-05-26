@@ -1,5 +1,6 @@
 import { getTokenStatus } from "../store";
 import { revokeAuth, startAuth } from "../oauth";
+import { loadYoutubeSettings } from "../config";
 import { booleanOption, stringOption, type ParsedArgs } from "../args";
 import { CliError } from "../types";
 
@@ -7,14 +8,15 @@ export async function runAuthCommand(args: ParsedArgs): Promise<unknown> {
   const action = args.command[1];
   if (action === "status") return getTokenStatus(args.config);
   if (action === "start") {
+    const settings = loadYoutubeSettings();
     return startAuth({
       config: args.config,
-      scope: stringOption(args.options, "scope"),
+      scope: stringOption(args.options, "scope") ?? settings.defaultAuthScope,
       clientFile: stringOption(args.options, "client-file"),
-      noOpen: booleanOption(args.options, "no-open"),
-      forceConsent: booleanOption(args.options, "force-consent"),
-      timeoutMs: parseTimeout(stringOption(args.options, "timeout-ms")),
-      loginHint: stringOption(args.options, "login-hint")
+      noOpen: booleanOption(args.options, "no-open") || settings.authOpenBrowser === false,
+      forceConsent: booleanOption(args.options, "force-consent") || settings.authForceConsent === true,
+      timeoutMs: parseTimeout(stringOption(args.options, "timeout-ms")) ?? settings.authTimeoutMs,
+      loginHint: stringOption(args.options, "login-hint") ?? settings.authLoginHint
     });
   }
   if (action === "revoke") return revokeAuth(args.config);

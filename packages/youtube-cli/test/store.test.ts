@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 
 import { YOUTUBE_SCOPES, assertSafeProfile, buildRuntimeConfig } from "../src/config";
 import { CliError } from "../src/types";
-import { getTokenStatus, readToken, tokenPath, writeToken, type YoutubeTokenFile } from "../src/store";
+import { getTokenStatus, listUploadStates, readToken, tokenPath, writeToken, writeUploadState, type YoutubeTokenFile } from "../src/store";
 
 const tempRoots: string[] = [];
 
@@ -59,6 +59,21 @@ describe("youtube token store", () => {
       exitCode: 2
     });
   });
+
+  test("writes and lists private upload states", async () => {
+    const config = await tempConfig();
+    await writeUploadState(config, uploadStateFixture(config.profile));
+
+    const states = await listUploadStates(config);
+
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({
+      uploadId: "abcdef1234567890",
+      filePath: "/tmp/video.mp4",
+      size: 16,
+      account: "youtube"
+    });
+  });
 });
 
 async function tempConfig() {
@@ -82,5 +97,25 @@ function tokenFixture(profile: string, input: Partial<YoutubeTokenFile> = {}): Y
     createdAt: now,
     updatedAt: now,
     ...input
+  };
+}
+
+function uploadStateFixture(profile: string) {
+  const now = new Date("2026-05-25T00:00:00.000Z").toISOString();
+  return {
+    schemaVersion: 1 as const,
+    profile,
+    account: "youtube" as const,
+    uploadId: "abcdef1234567890",
+    filePath: "/tmp/video.mp4",
+    size: 16,
+    mimeType: "video/mp4",
+    metadata: {
+      snippet: { title: "Launch" },
+      status: { privacyStatus: "private" }
+    },
+    sessionUrl: "https://upload.youtube.test/session/1",
+    createdAt: now,
+    updatedAt: now
   };
 }

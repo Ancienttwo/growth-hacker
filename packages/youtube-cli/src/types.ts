@@ -43,4 +43,6 @@ export class CliError extends Error {
 export interface RuntimeConfig {
   profile: string;
   growthRoot: string;
+  expectedChannelId?: string;
+  expectedChannelTitle?: string;
 }

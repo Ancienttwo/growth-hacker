@@ -8,3 +8,4 @@ tmp/
 _ref/
 .env
 .env.local
+growth-hacker.config.json

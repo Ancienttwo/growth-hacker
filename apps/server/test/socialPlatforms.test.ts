@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { isSocialTaskSupported, listSocialPlatformAdapters, supportedSocialTaskTypes } from "../src/socialPlatforms";
+import type { AppConfig } from "../src/config";
 
 describe("social platform adapters", () => {
   test("registers current and planned CLI-backed platform modes", () => {
@@ -25,4 +26,30 @@ describe("social platform adapters", () => {
       scheduledTasks: []
     });
   });
+
+  test("detects the repo-local yt-cli entrypoint", async () => {
+    const youtube = listSocialPlatformAdapters().find((adapter) => adapter.id === "youtube");
+    const status = await youtube?.cliStatus?.(testConfig());
+
+    expect(status).toMatchObject({
+      command: "yt-cli",
+      state: "available"
+    });
+    expect(status?.path).toContain("packages/youtube-cli/src/cli.ts");
+  });
 });
+
+function testConfig(): AppConfig {
+  return {
+    growthRoot: "/tmp/growth-hacker-test",
+    hermesHome: "/tmp/hermes-test",
+    hermesApiBaseUrl: "http://127.0.0.1:8642",
+    hermesApiKey: "",
+    defaultHermesProfile: "growth-agent",
+    socialAgents: [{ id: "growth-agent", runner: "local" }],
+    socialCronAgents: ["growth-agent"],
+    bundledXiaohongshuSkillRoot: "/tmp/xhs-skill",
+    legacyXiaohongshuRoot: "/tmp/xhs-legacy",
+    port: 8787
+  };
+}

@@ -7,5 +7,15 @@
   "socialAgents": [{ "id": "growth-agent", "runner": "local" }],
   "socialCronAgents": ["growth-agent"],
   "bundledXiaohongshuSkillRoot": "./skills/social-media/xiaohongshu-skill",
-  "legacyXiaohongshuRoot": "~/.xiaohongshu/client"
+  "legacyXiaohongshuRoot": "~/.xiaohongshu/client",
+  "youtube": {
+    "oauthClientFile": "~/.growth/secrets/youtube-oauth-client.json",
+    "defaultAuthScope": "read",
+    "authOpenBrowser": true,
+    "authForceConsent": false,
+    "authTimeoutMs": 120000,
+    "authLoginHint": "",
+    "expectedChannelId": "",
+    "expectedChannelTitle": ""
+  }
 }

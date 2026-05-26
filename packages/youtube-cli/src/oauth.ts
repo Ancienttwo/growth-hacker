@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
-import { expandHome, expandScopeInput, YOUTUBE_ACCOUNT } from "./config";
+import { expandConfigPath, expandHome, expandScopeInput, loadProjectSettings, YOUTUBE_ACCOUNT } from "./config";
 import { isTokenExpiring, readToken, removeToken, writeToken, type YoutubeTokenFile } from "./store";
 import { CliError, type RuntimeConfig } from "./types";
 
@@ -48,9 +48,13 @@ export interface TokenEndpointResponse {
   error_description?: string;
 }
 
-export async function loadOAuthClient(clientFile?: string): Promise<OAuthClientConfig> {
+export async function loadOAuthClient(clientFile?: string, cwd = process.cwd()): Promise<OAuthClientConfig> {
+  const project = loadProjectSettings(cwd);
   const file = clientFile ?? process.env.YOUTUBE_OAUTH_CLIENT_FILE;
-  if (file) return parseClientJson(JSON.parse(await readFile(expandHome(file), "utf8")));
+  if (file) return parseClientJson(await readOAuthClientJson(expandHome(file)));
+  if (project.youtube.oauthClientFile) {
+    return parseClientJson(await readOAuthClientJson(expandConfigPath(project.youtube.oauthClientFile, project.configDir)));
+  }
 
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   if (!clientId) {
@@ -66,6 +70,24 @@ export async function loadOAuthClient(clientFile?: string): Promise<OAuthClientC
     authUri: AUTH_ENDPOINT,
     tokenUri: DEFAULT_TOKEN_ENDPOINT
   };
+}
+
+async function readOAuthClientJson(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      throw new CliError("youtube_client_missing", `OAuth client file not found: ${path}`, { exitCode: 2 });
+    }
+    if (error instanceof SyntaxError) {
+      throw new CliError("youtube_client_invalid", `OAuth client file is not valid JSON: ${path}`, { exitCode: 2 });
+    }
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === code);
 }
 
 export function parseClientJson(value: unknown): OAuthClientConfig {

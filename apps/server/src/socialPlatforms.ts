@@ -14,6 +14,7 @@ import type { AppConfig } from "./config";
 import { commandExists } from "./shell";
 import { profileRoot, safeStat, xhsDocumentRoot } from "./workspace";
 import { getXhsAuthStatus } from "./xhs";
+import { getYoutubeCliStatus } from "./youtubeCli";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(serverDir, "../../..");
@@ -89,7 +90,8 @@ const socialPlatformAdapters: SocialPlatformAdapter[] = [
     shortLabel: "YT",
     cliCommand: "yt-cli",
     cliMissingMessage: "yt-cli not found. Run `bun --silent run yt-cli -- auth status --json` from this repo or link the package bin.",
-    capabilities: noCliCapabilities
+    capabilities: noCliCapabilities,
+    cliStatus: getYoutubeCliStatus
   }
 ];
 

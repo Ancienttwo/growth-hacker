@@ -16,6 +16,7 @@
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun test apps packages",
     "yt-cli": "bun --silent packages/youtube-cli/src/cli.ts",
+    "yt-cli:live-smoke": "bun scripts/youtube-cli-live-smoke.ts",
     "lint": "bun run typecheck"
   },
   "dependencies": {

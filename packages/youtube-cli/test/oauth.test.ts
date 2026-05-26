@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { YOUTUBE_SCOPES, buildRuntimeConfig } from "../src/config";
-import { buildAuthUrl, createPkceChallenge, createPkceVerifier, parseClientJson, refreshAccessToken } from "../src/oauth";
+import { buildAuthUrl, createPkceChallenge, createPkceVerifier, loadOAuthClient, parseClientJson, refreshAccessToken } from "../src/oauth";
 import { writeToken, type YoutubeTokenFile } from "../src/store";
 
 const tempRoots: string[] = [];
@@ -59,6 +59,54 @@ describe("youtube oauth helpers", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("state")).toBe("state");
     expect(url.searchParams.get("prompt")).toBe("consent");
+  });
+
+  test("loads OAuth client file from growth-hacker config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "yt-cli-oauth-config-"));
+    tempRoots.push(root);
+    await writeFile(
+      join(root, "growth-hacker.config.json"),
+      JSON.stringify({
+        youtube: {
+          oauthClientFile: "./oauth-client.json"
+        }
+      }),
+      { mode: 0o600 }
+    );
+    await writeFile(
+      join(root, "oauth-client.json"),
+      JSON.stringify({
+        installed: {
+          client_id: "configured-client",
+          client_secret: "configured-secret"
+        }
+      }),
+      { mode: 0o600 }
+    );
+
+    await expect(loadOAuthClient(undefined, root)).resolves.toMatchObject({
+      clientId: "configured-client",
+      clientSecret: "configured-secret"
+    });
+  });
+
+  test("reports missing configured OAuth client file as a stable CLI error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "yt-cli-oauth-missing-config-"));
+    tempRoots.push(root);
+    await writeFile(
+      join(root, "growth-hacker.config.json"),
+      JSON.stringify({
+        youtube: {
+          oauthClientFile: "./missing-oauth-client.json"
+        }
+      }),
+      { mode: 0o600 }
+    );
+
+    await expect(loadOAuthClient(undefined, root)).rejects.toMatchObject({
+      code: "youtube_client_missing",
+      exitCode: 2
+    });
   });
 
   test("refreshes expired tokens and preserves refresh token", async () => {

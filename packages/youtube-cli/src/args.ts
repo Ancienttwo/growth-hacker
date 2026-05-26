@@ -8,7 +8,7 @@ export interface ParsedArgs {
   json: boolean;
 }
 
-const BOOLEAN_FLAGS = new Set(["json", "help", "no-open", "force-consent"]);
+const BOOLEAN_FLAGS = new Set(["json", "help", "no-open", "force-consent", "confirm-public", "dry-run", "ban-author"]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const command: string[] = [];
@@ -35,7 +35,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
   const config = buildRuntimeConfig({
     profile: stringOption(options, "profile"),
-    growthRoot: stringOption(options, "growth-root")
+    growthRoot: stringOption(options, "growth-root"),
+    expectedChannelId: stringOption(options, "expected-channel-id"),
+    expectedChannelTitle: stringOption(options, "expected-channel-title")
   });
   return {
     command,

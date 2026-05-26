@@ -227,6 +227,32 @@ interface HermesVideoAuthStatus {
   message?: string;
 }
 
+interface YoutubeProfileStatus {
+  profile: string;
+  cli: {
+    command?: string;
+    path?: string;
+    state: "available" | "missing" | "not-configured" | "degraded";
+    message?: string;
+  };
+  auth: {
+    authenticated: boolean;
+    state: string;
+    scopes: string[];
+    tokenPath?: string;
+    message?: string;
+  };
+  channel?: {
+    id: string;
+    title: string;
+    customUrl?: string;
+  };
+  channelError?: {
+    code: string;
+    message: string;
+  };
+}
+
 interface HermesChatRunResponse {
   runId: string;
   status: string;
@@ -608,6 +634,7 @@ export function App() {
   const [hermesChatStatus, setHermesChatStatus] = useState<HermesChatStatus | null>(null);
   const [hermesVideoAuth, setHermesVideoAuth] = useState<HermesVideoAuthStatus | null>(null);
   const [hermesVideoAuthUrl, setHermesVideoAuthUrl] = useState<string | null>(null);
+  const [youtubeProfileStatus, setYoutubeProfileStatus] = useState<YoutubeProfileStatus | null>(null);
   const [hermesModelOptions, setHermesModelOptions] = useState<HermesModelOptions>(fallbackHermesModelOptions);
   const [hermesSkills, setHermesSkills] = useState<HermesSkillInfo[]>([]);
   const [hermesContext, setHermesContext] = useState<HermesContextSnapshot | null>(null);
@@ -727,6 +754,7 @@ export function App() {
       setPublishedPosts([]);
       setAutoReplyItems([]);
       setAutoReplySettings(defaultAutoReplySettings);
+      setYoutubeProfileStatus(null);
       return;
     }
     setExpandedDirectories(new Set());
@@ -740,6 +768,11 @@ export function App() {
       setPublishedPosts([]);
       setAutoReplyItems([]);
       setAutoReplySettings(defaultAutoReplySettings);
+    }
+    if (selectedProfile.platform === "youtube") {
+      void reloadYoutubeProfileStatus(selectedProfile.profile);
+    } else {
+      setYoutubeProfileStatus(null);
     }
   }, [selectedProfile?.platform, selectedProfile?.profile]);
 
@@ -955,6 +988,32 @@ export function App() {
       setSelectedArtifact(null);
     }
     return payload.artifacts;
+  }
+
+  async function reloadYoutubeProfileStatus(profile = selectedProfile?.platform === "youtube" ? selectedProfile.profile : undefined) {
+    if (!profile) {
+      setYoutubeProfileStatus(null);
+      return null;
+    }
+    try {
+      const status = await api<YoutubeProfileStatus>(`/api/platforms/youtube/profiles/${encodeURIComponent(profile)}/status`);
+      setYoutubeProfileStatus(status);
+      return status;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "youtube_profile_status_failed";
+      const status: YoutubeProfileStatus = {
+        profile,
+        cli: { state: "degraded", message },
+        auth: {
+          authenticated: false,
+          state: "unavailable",
+          scopes: [],
+          message
+        }
+      };
+      setYoutubeProfileStatus(status);
+      return status;
+    }
   }
 
   async function openArtifact(artifact: ArtifactInfo) {
@@ -2376,7 +2435,10 @@ export function App() {
                     if (hermesVideoAuthUrl) window.open(hermesVideoAuthUrl, "_blank", "noopener,noreferrer");
                   }}
                   onRunMigration={() => void runMigration()}
+                  onRefreshYoutubeProfileStatus={() => void reloadYoutubeProfileStatus()}
                   openclaw={openclaw}
+                  selectedProfile={selectedProfile}
+                  youtubeProfileStatus={youtubeProfileStatus}
                 />
               ) : null}
             </div>
@@ -5552,8 +5614,11 @@ function SetupView({
   onBootstrap,
   onLogin,
   onOpenHermesVideoAuthUrl,
+  onRefreshYoutubeProfileStatus,
   onRunMigration,
-  openclaw
+  openclaw,
+  selectedProfile,
+  youtubeProfileStatus
 }: {
   auth: XhsAuthStatus | null;
   busy: string | null;
@@ -5566,10 +5631,14 @@ function SetupView({
   onBootstrap: () => void;
   onLogin: (mode: "qrcode" | "browser") => void;
   onOpenHermesVideoAuthUrl: () => void;
+  onRefreshYoutubeProfileStatus: () => void;
   onRunMigration: () => void;
   openclaw?: RuntimeStatus;
+  selectedProfile: WorkspaceProfile | null;
+  youtubeProfileStatus: YoutubeProfileStatus | null;
 }) {
   const { t } = useI18n();
+  const youtubeProfileReady = selectedProfile?.platform === "youtube";
   return (
     <div className="content-grid">
       <Card size="sm">
@@ -5627,6 +5696,29 @@ function SetupView({
               {t("setup.openAuthUrl")}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>YouTube CLI</CardTitle>
+          <CardDescription>{youtubeProfileReady ? `youtube/${selectedProfile.profile}` : t("youtube.noProfile")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <MetricRow label={t("common.profile")} value={youtubeProfileReady ? selectedProfile.profile : t("common.missing")} />
+          <MetricRow label={t("setup.state")} value={youtubeProfileStatus?.cli.state ?? t("common.unknown")} />
+          <MetricRow label="Auth" value={youtubeAuthValue(youtubeProfileStatus, t)} />
+          <MetricRow label="Channel" value={youtubeChannelValue(youtubeProfileStatus, t)} />
+          <MetricRow label="Scopes" value={youtubeScopesValue(youtubeProfileStatus, t)} />
+          {youtubeProfileStatus?.auth.message || youtubeProfileStatus?.channelError ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {youtubeProfileStatus.channelError?.message ?? youtubeProfileStatus.auth.message}
+            </p>
+          ) : null}
+          <Button className="w-full" disabled={!youtubeProfileReady} onClick={onRefreshYoutubeProfileStatus} type="button" variant="outline">
+            <RefreshCcw className="size-4" />
+            Refresh
+          </Button>
         </CardContent>
       </Card>
 
@@ -5767,6 +5859,28 @@ function xhsAccountValue(auth: XhsAuthStatus | null, t: TFunction): string {
   if (auth.authenticated) return auth.nickname ?? auth.redId ?? t("xhsAuth.signedIn");
   if (auth.guest || auth.state === "guest") return t("xhsAuth.guestPartial");
   return auth.nickname ?? t("common.unknown");
+}
+
+function youtubeAuthValue(status: YoutubeProfileStatus | null, t: TFunction): string {
+  if (!status) return t("common.unknown");
+  if (status.auth.authenticated) return t("common.ready");
+  return status.auth.state || t("common.missing");
+}
+
+function youtubeChannelValue(status: YoutubeProfileStatus | null, t: TFunction): string {
+  if (!status) return t("common.unknown");
+  if (status.channel) return `${status.channel.title} (${status.channel.id})`;
+  if (status.channelError) return status.channelError.code;
+  return t("common.missing");
+}
+
+function youtubeScopesValue(status: YoutubeProfileStatus | null, t: TFunction): string {
+  if (!status?.auth.scopes.length) return t("common.missing");
+  return status.auth.scopes.map(shortYoutubeScope).join(", ");
+}
+
+function shortYoutubeScope(scope: string): string {
+  return scope.replace("https://www.googleapis.com/auth/youtube.", "").replace("https://www.googleapis.com/auth/", "");
 }
 
 function AgentList({

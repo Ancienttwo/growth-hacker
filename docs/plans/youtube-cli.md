@@ -104,7 +104,7 @@ Ownership boundary:
 ```text
 operator
   |
-  | yt-cli channel mine --profile astrozi --json
+  | yt-cli channel mine --profile workspace-or-user --json
   v
 src/cli.ts
   |
@@ -112,7 +112,7 @@ src/cli.ts
   v
 src/store.ts
   |
-  | read ~/.growth/astrozi/youtube/auth/token.json
+  | read ~/.growth/workspace-or-user/youtube/auth/token.json
   | validate 0600 token file and required fields
   v
 src/oauth.ts
@@ -144,7 +144,7 @@ JSON success:
     }
   },
   "meta": {
-    "profile": "astrozi",
+    "profile": "workspace-or-user",
     "account": "youtube",
     "scopes": ["https://www.googleapis.com/auth/youtube.readonly"]
   }
@@ -158,7 +158,7 @@ JSON error:
   "ok": false,
   "error": {
     "code": "youtube_auth_missing",
-    "message": "Run `yt-cli auth start --profile astrozi --scope read` first."
+    "message": "Run `yt-cli auth start --profile workspace-or-user --scope read` first."
   }
 }
 ```
@@ -189,7 +189,29 @@ Credential sources, in priority order:
 
 1. `--client-file <path>` containing Google OAuth desktop-client JSON.
 2. `YOUTUBE_OAUTH_CLIENT_FILE`.
-3. `YOUTUBE_CLIENT_ID` plus `YOUTUBE_CLIENT_SECRET`.
+3. `growth-hacker.config.json` `youtube.oauthClientFile`.
+4. `YOUTUBE_CLIENT_ID` plus `YOUTUBE_CLIENT_SECRET`.
+
+The OAuth client file identifies the application, not a user. Each user or workspace profile must complete its own browser authorization and store its own token under `~/.growth/<profile>/youtube/auth/token.json`. Tokens are never copied across profiles.
+
+Project config may also set non-secret auth defaults:
+
+```json
+{
+  "youtube": {
+    "oauthClientFile": "~/.growth/secrets/youtube-oauth-client.json",
+    "defaultAuthScope": "read",
+    "authOpenBrowser": true,
+    "authForceConsent": false,
+    "authTimeoutMs": 120000,
+    "authLoginHint": "",
+    "expectedChannelId": "",
+    "expectedChannelTitle": ""
+  }
+}
+```
+
+`defaultProfile` remains supported as a local personal convenience, but shared examples and live smoke require explicit profile selection.
 
 Token path:
 
@@ -228,41 +250,61 @@ Commands must assert required scopes before API calls and return `youtube_scope_
 Phase 1:
 
 ```bash
-yt-cli auth status --profile astrozi --json
-yt-cli auth start --profile astrozi --scope read --json
-yt-cli auth revoke --profile astrozi --json
+yt-cli auth status --profile workspace-or-user --json
+yt-cli auth start --profile workspace-or-user --scope read --json
+yt-cli auth revoke --profile workspace-or-user --json
 
-yt-cli channel mine --profile astrozi --json
-yt-cli videos list --profile astrozi --max-results 25 --json
-yt-cli videos get --profile astrozi --video-id VIDEO_ID --json
-yt-cli comments list --profile astrozi --video-id VIDEO_ID --max-results 50 --json
+yt-cli channel mine --profile workspace-or-user --json
+yt-cli videos list --profile workspace-or-user --max-results 25 --json
+yt-cli videos get --profile workspace-or-user --video-id VIDEO_ID --json
+yt-cli comments list --profile workspace-or-user --video-id VIDEO_ID --max-results 50 --json
 ```
 
 Phase 2:
 
 ```bash
-yt-cli upload create --profile astrozi --file artifacts/videos/foo.mp4 \
+yt-cli upload create --profile workspace-or-user --file artifacts/videos/foo.mp4 \
   --title "Title" --description-file description.md \
   --privacy private --made-for-kids false --contains-synthetic-media true \
   --json
 ```
 
+Implemented Phase 2 slice:
+
+- `upload create` uses the official resumable upload flow.
+- Uploads require upload-capable scope.
+- Public uploads are blocked unless `--confirm-public` is present.
+- `--made-for-kids` and `--contains-synthetic-media` are explicit required flags.
+- Resumable session state is stored under `~/.growth/<profile>/youtube/uploads/` with private file permissions while an upload is in flight.
+- `upload status` lists local in-flight sessions or checks a specific remote session using an empty status `PUT`.
+- `upload resume` resumes from the byte after YouTube's `Range` header and clears local state on completion.
+
 Phase 3:
 
 ```bash
-yt-cli comments reply --profile astrozi --parent-id COMMENT_ID --text-file reply.md --dry-run --json
-yt-cli comments reply --profile astrozi --parent-id COMMENT_ID --text-file reply.md --confirm COMMENT_ID --json
-yt-cli comments moderate --profile astrozi --comment-id COMMENT_ID --status rejected --dry-run --json
-yt-cli comments delete --profile astrozi --comment-id COMMENT_ID --confirm COMMENT_ID --json
+yt-cli comments reply --profile workspace-or-user --parent-id COMMENT_ID --text-file reply.md --dry-run --json
+yt-cli comments reply --profile workspace-or-user --parent-id COMMENT_ID --text-file reply.md --confirm COMMENT_ID --json
+yt-cli comments moderate --profile workspace-or-user --comment-id COMMENT_ID --status rejected --dry-run --json
+yt-cli comments delete --profile workspace-or-user --comment-id COMMENT_ID --confirm COMMENT_ID --json
 ```
+
+Implemented Phase 3 slice:
+
+- `comments reply`, `comments moderate`, and `comments delete` default to dry-run when `--confirm` is absent.
+- Real mutation requires `--confirm` to match the target comment ID exactly.
+- Comment mutations require `youtube.force-ssl` / `operate` scope.
+- `comments moderate --ban-author` is only valid with `--status rejected`.
 
 Danger rules:
 
 - Read commands require no confirmation.
 - Upload defaults to `privacy=private`.
 - Upload with `privacy=public` requires `--confirm-public`.
+- Upload create/resume require expected channel binding before the first write request.
+- Upload mutations require upload-capable and read-capable scope so the CLI can verify the channel before mutation.
 - Reply/moderate/delete support `--dry-run`.
 - Delete and reject require `--confirm <id>`.
+- Confirmed reply/moderate/delete require expected channel binding before the mutation request.
 
 ## Data Model
 
@@ -307,6 +349,7 @@ Phase 1 endpoints:
 Phase 2 endpoint:
 
 - `POST /upload/youtube/v3/videos?uploadType=resumable`
+- `PUT <resumable-session-location>`
 
 Phase 3 endpoints:
 
@@ -463,11 +506,52 @@ Parallel lanes after Phase 1:
   - Surfaced by: Distribution - local CLI is unusable without setup docs.
   - Files: `packages/youtube-cli/README.md`
   - Verify: manual command examples and `bun run typecheck`
+- [x] T7 (P2, human: ~3h / CC: ~35min) - Guarded uploads - Implement `upload create` with resumable upload, upload scope checks, metadata validation, public-confirm gate, and mocked API tests.
+  - Surfaced by: Phase 2 - generated Hermes video artifacts need a controlled path into YouTube without weakening account safety.
+  - Files: `packages/youtube-cli/src/youtubeApi.ts`, `packages/youtube-cli/src/commands/upload.ts`, `packages/youtube-cli/test/youtubeApi.test.ts`, `packages/youtube-cli/test/cli.test.ts`
+  - Verify: `bun test packages/youtube-cli/test/youtubeApi.test.ts packages/youtube-cli/test/cli.test.ts`
+- [x] T8 (P2, human: ~2h / CC: ~25min) - Upload resume/status - Add local upload state listing, remote resumable status checks, resume-from-Range behavior, expired-session handling, and tests.
+  - Surfaced by: Phase 2 - resumable session state is only useful if operators can inspect and continue it.
+  - Files: `packages/youtube-cli/src/store.ts`, `packages/youtube-cli/src/youtubeApi.ts`, `packages/youtube-cli/src/commands/upload.ts`, `packages/youtube-cli/test/store.test.ts`, `packages/youtube-cli/test/youtubeApi.test.ts`, `packages/youtube-cli/test/cli.test.ts`
+  - Verify: `bun test packages/youtube-cli/test/store.test.ts packages/youtube-cli/test/youtubeApi.test.ts packages/youtube-cli/test/cli.test.ts`
+- [x] T9 (P3, human: ~3h / CC: ~30min) - Comment mutation gates - Implement `comments reply`, `comments moderate`, and `comments delete` with default dry-run, exact confirm gates, operate scope checks, and mocked API tests.
+  - Surfaced by: Phase 3 - account operations need explicit dangerous-action contracts before dashboard integration.
+  - Files: `packages/youtube-cli/src/youtubeApi.ts`, `packages/youtube-cli/src/commands/comments.ts`, `packages/youtube-cli/test/youtubeApi.test.ts`, `packages/youtube-cli/test/cli.test.ts`
+  - Verify: `bun test packages/youtube-cli/test/youtubeApi.test.ts packages/youtube-cli/test/cli.test.ts`
+- [x] T10 (P3, human: ~1h / CC: ~15min) - Live smoke harness - Add an opt-in live validation script for auth status, channel proof, video list, upload state, optional comment dry-run, and optional private upload.
+  - Surfaced by: Verification - mocked tests pass, but real OAuth/scope/quota behavior needs a repeatable harness.
+  - Files: `scripts/youtube-cli-live-smoke.ts`, `package.json`, `packages/youtube-cli/README.md`
+  - Verify: `bun scripts/youtube-cli-live-smoke.ts` and `YT_CLI_LIVE=1 bun scripts/youtube-cli-live-smoke.ts` fail safely without explicit live/profile/channel binding.
+- [x] T11 (P2, human: ~30min / CC: ~10min) - OAuth project settings - Add `growth-hacker.config.json` YouTube OAuth defaults, make `yt-cli auth start` read them, and cover config/client-file resolution in tests.
+  - Surfaced by: Operator setup - OAuth browser auth should be repeatable from repo settings without committing secrets.
+  - Files: `growth-hacker.config.example.json`, `packages/youtube-cli/src/config.ts`, `packages/youtube-cli/src/oauth.ts`, `packages/youtube-cli/src/commands/auth.ts`, `packages/youtube-cli/test/config.test.ts`, `packages/youtube-cli/test/oauth.test.ts`, `packages/youtube-cli/README.md`
+  - Verify: `bun test packages/youtube-cli/test/config.test.ts packages/youtube-cli/test/oauth.test.ts`
+- [x] T12 (P3, human: ~20min / CC: ~20min) - Live OAuth account validation - Create the Google Cloud desktop OAuth client, enable YouTube Data API v3, install the client JSON under the local secret path, temporarily authorize the local `astrozi` profile, and pass read/status live smoke.
+  - Surfaced by: T10 - the harness existed but still needed real Google OAuth and API enablement.
+  - Files: local-only `growth-hacker.config.json`, local-only `~/.growth/secrets/youtube-oauth-client.json`, local-only `~/.growth/astrozi/youtube/auth/token.json` created during validation and later revoked.
+  - Verify: `YT_CLI_LIVE=1 YT_CLI_PROFILE=astrozi YT_CLI_EXPECTED_CHANNEL_ID=<channel-id> bun run yt-cli:live-smoke`
+  - Closeout: the local `astrozi` token was revoked after validation so future checks require the real profile owner to authorize.
+- [x] T13 (P2, human: ~45min / CC: ~15min) - Per-user authorization boundary - Remove shared/default `astrozi` assumptions, document shared OAuth app credentials versus per-user tokens, and require explicit profile plus expected channel binding in live smoke.
+  - Surfaced by: Auth safety - operators must not reuse Chris's local Google authorization for workspace/user validation.
+  - Files: `scripts/youtube-cli-live-smoke.ts`, `packages/youtube-cli/src/config.ts`, `packages/youtube-cli/test/config.test.ts`, `growth-hacker.config.example.json`, local-only `growth-hacker.config.json`, `packages/youtube-cli/README.md`, `docs/plans/youtube-cli.md`
+  - Verify: `bun test packages/youtube-cli/test/config.test.ts packages/youtube-cli/test/oauth.test.ts`, `bun run typecheck`, `YT_CLI_LIVE=1 bun run yt-cli:live-smoke` fails with `yt_cli_profile_required`, and `bun --silent run yt-cli -- auth status --profile astrozi --json` reports no authenticated token.
+- [x] T14 (P2, human: ~1h / CC: ~20min) - Expected-channel write guard - Push expected channel validation into confirmed write paths so direct CLI/API calls cannot bypass live smoke.
+  - Surfaced by: T13 residual risk - live smoke proved the channel, but `upload create`, `upload resume`, and confirmed comment mutations still needed the same account guard.
+  - Files: `packages/youtube-cli/src/types.ts`, `packages/youtube-cli/src/config.ts`, `packages/youtube-cli/src/args.ts`, `packages/youtube-cli/src/youtubeApi.ts`, `packages/youtube-cli/test/youtubeApi.test.ts`, `packages/youtube-cli/README.md`, `docs/plans/youtube-cli.md`
+  - Verify: `bun test packages/youtube-cli/test`, `bun run typecheck`, `git diff --check`, and live smoke remains blocked without a user token.
+- [x] T15 (P2, human: ~1h / CC: ~20min) - Dashboard read-only status - Add a server route and setup-card surface for profile-level YouTube CLI auth/channel status without exposing write actions.
+  - Surfaced by: Phase 4 integration - the CLI guard is in place, but operators still need to see whether a selected profile has a token/channel before running account work.
+  - Files: `apps/server/src/youtubeCli.ts`, `apps/server/src/server.ts`, `apps/server/src/socialPlatforms.ts`, `apps/server/test/youtubeCli.test.ts`, `apps/server/test/socialPlatforms.test.ts`, `apps/web/src/App.tsx`, `docs/plans/youtube-cli.md`
+  - Verify: `bun test packages/youtube-cli/test apps/server/test/socialPlatforms.test.ts apps/server/test/youtubeCli.test.ts apps/server/test/youtubeVideoRoutes.test.ts apps/web/src/platformNavigation.test.ts`, `bun run typecheck`, `git diff --check`, and `curl http://127.0.0.1:8787/api/platforms/youtube/profiles/astrozi/status`.
 
 ## References
 
 - Google OAuth 2.0 for desktop/native apps: https://developers.google.com/identity/protocols/oauth2/native-app
 - YouTube Data API `videos.insert`: https://developers.google.com/youtube/v3/docs/videos/insert
+- YouTube resumable upload protocol: https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
+- YouTube Data API `comments.insert`: https://developers.google.com/youtube/v3/docs/comments/insert
+- YouTube Data API `comments.setModerationStatus`: https://developers.google.com/youtube/v3/docs/comments/setModerationStatus
+- YouTube Data API `comments.delete`: https://developers.google.com/youtube/v3/docs/comments/delete
 - YouTube comments implementation guide: https://developers.google.com/youtube/v3/guides/implementation/comments
 - CLI-Anything local reference: `_ref/CLI-Anything/cli-anything-plugin/HARNESS.md`
 

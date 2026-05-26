@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { TOKEN_REFRESH_SKEW_MS, YOUTUBE_ACCOUNT } from "./config";
@@ -29,6 +29,20 @@ export interface YoutubeAccountFile {
   syncedAt: string;
 }
 
+export interface YoutubeUploadStateFile {
+  schemaVersion: 1;
+  profile: string;
+  account: typeof YOUTUBE_ACCOUNT;
+  uploadId: string;
+  filePath: string;
+  size: number;
+  mimeType: string;
+  metadata: Record<string, unknown>;
+  sessionUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TokenStatus {
   authenticated: boolean;
   state: "missing" | "valid" | "expired" | "expiring" | "invalid";
@@ -52,6 +66,15 @@ export function tokenPath(config: RuntimeConfig): string {
 
 export function accountPath(config: RuntimeConfig): string {
   return join(youtubeRoot(config), "account.json");
+}
+
+export function uploadStateDir(config: RuntimeConfig): string {
+  return join(youtubeRoot(config), "uploads");
+}
+
+export function uploadStatePath(config: RuntimeConfig, uploadId: string): string {
+  assertSafeUploadId(uploadId);
+  return join(uploadStateDir(config), `${uploadId}.json`);
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -133,6 +156,59 @@ export async function readAccount(config: RuntimeConfig): Promise<YoutubeAccount
   }
 }
 
+export async function writeUploadState(config: RuntimeConfig, state: YoutubeUploadStateFile): Promise<string> {
+  validateUploadState(config, state);
+  await mkdir(uploadStateDir(config), { recursive: true, mode: 0o700 });
+  await chmod(uploadStateDir(config), 0o700);
+  const path = uploadStatePath(config, state.uploadId);
+  await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
+export async function removeUploadState(config: RuntimeConfig, uploadId: string): Promise<void> {
+  await rm(uploadStatePath(config, uploadId), { force: true });
+}
+
+export async function readUploadState(config: RuntimeConfig, uploadId: string): Promise<YoutubeUploadStateFile> {
+  const path = uploadStatePath(config, uploadId);
+  if (!(await pathExists(path))) {
+    throw new CliError("youtube_upload_state_missing", `Upload state not found: ${uploadId}`);
+  }
+  const mode = (await stat(path)).mode & 0o777;
+  if ((mode & 0o077) !== 0) {
+    throw new CliError("youtube_upload_state_permissions", `Upload state file must be private: ${path}`, {
+      details: { mode: mode.toString(8), expected: "600" }
+    });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new CliError("youtube_upload_state_invalid", "Upload state file is not valid JSON.", {
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+  return validateUploadState(config, parsed);
+}
+
+export async function listUploadStates(config: RuntimeConfig): Promise<YoutubeUploadStateFile[]> {
+  const dir = uploadStateDir(config);
+  if (!(await pathExists(dir))) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  const states: YoutubeUploadStateFile[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const uploadId = entry.name.slice(0, -".json".length);
+    try {
+      states.push(await readUploadState(config, uploadId));
+    } catch {
+      // Ignore unrelated or corrupt files when listing; direct reads still report the exact error.
+    }
+  }
+  return states.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 export async function getTokenStatus(config: RuntimeConfig): Promise<TokenStatus> {
   const path = tokenPath(config);
   try {
@@ -201,4 +277,35 @@ export function validateToken(config: RuntimeConfig, value: unknown): YoutubeTok
 
 export function isTokenExpiring(token: YoutubeTokenFile, now = Date.now()): boolean {
   return Date.parse(token.expiresAt) - now <= TOKEN_REFRESH_SKEW_MS;
+}
+
+export function assertSafeUploadId(uploadId: string): string {
+  if (!/^[a-f0-9]{16}$/.test(uploadId)) {
+    throw new CliError("youtube_upload_id_invalid", "Upload id must be the 16-character id returned by upload create.");
+  }
+  return uploadId;
+}
+
+export function validateUploadState(config: RuntimeConfig, value: unknown): YoutubeUploadStateFile {
+  if (!value || typeof value !== "object") {
+    throw new CliError("youtube_upload_state_invalid", "Upload state file is not an object.");
+  }
+  const state = value as Partial<YoutubeUploadStateFile>;
+  if (state.schemaVersion !== 1) throw new CliError("youtube_upload_state_invalid", "Upload state schema version is not supported.");
+  if (state.profile !== config.profile || state.account !== YOUTUBE_ACCOUNT) {
+    throw new CliError("youtube_upload_state_invalid", "Upload state belongs to a different profile or account.");
+  }
+  for (const key of ["uploadId", "filePath", "mimeType", "sessionUrl", "createdAt", "updatedAt"] as const) {
+    if (typeof state[key] !== "string" || !state[key]) {
+      throw new CliError("youtube_upload_state_invalid", `Upload state is missing ${key}.`);
+    }
+  }
+  assertSafeUploadId(state.uploadId as string);
+  if (typeof state.size !== "number" || !Number.isSafeInteger(state.size) || state.size <= 0) {
+    throw new CliError("youtube_upload_state_invalid", "Upload state has invalid size.");
+  }
+  if (!state.metadata || typeof state.metadata !== "object" || Array.isArray(state.metadata)) {
+    throw new CliError("youtube_upload_state_invalid", "Upload state has invalid metadata.");
+  }
+  return state as YoutubeUploadStateFile;
 }
