@@ -58,6 +58,41 @@ hook_json_extract_with_bun() {
   ' 2>/dev/null
 }
 
+hook_validate_stdin_json() {
+  if [[ -n "${HOOK_STDIN_JSON_VALID+x}" ]]; then
+    return
+  fi
+
+  if [[ -z "$HOOK_STDIN_JSON" ]]; then
+    HOOK_STDIN_JSON_VALID=""
+    export HOOK_STDIN_JSON_VALID
+    return
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    if printf '%s' "$HOOK_STDIN_JSON" | jq -e . >/dev/null 2>&1; then
+      HOOK_STDIN_JSON_VALID="1"
+    else
+      HOOK_STDIN_JSON_VALID=""
+    fi
+  elif command -v bun >/dev/null 2>&1; then
+    if JSON_INPUT="$HOOK_STDIN_JSON" bun -e '
+      try { JSON.parse(process.env.JSON_INPUT ?? ""); }
+      catch { process.exit(1); }
+    ' >/dev/null 2>&1; then
+      HOOK_STDIN_JSON_VALID="1"
+    else
+      HOOK_STDIN_JSON_VALID=""
+    fi
+  else
+    # No validator available — can't tell missing-key from malformed-JSON;
+    # default to silent to avoid noisy false positives.
+    HOOK_STDIN_JSON_VALID="unknown"
+  fi
+
+  export HOOK_STDIN_JSON_VALID
+}
+
 hook_json_get() {
   local path="$1"
   local default_value="${2:-}"
@@ -65,16 +100,23 @@ hook_json_get() {
 
   hook_read_stdin_once
 
-  if [[ -n "$HOOK_STDIN_JSON" ]] && command -v jq >/dev/null 2>&1; then
+  if [[ -z "$HOOK_STDIN_JSON" ]]; then
+    printf '%s' "$default_value"
+    return
+  fi
+
+  hook_validate_stdin_json
+
+  if command -v jq >/dev/null 2>&1; then
     parsed="$(printf '%s' "$HOOK_STDIN_JSON" | jq -r "$path // empty" 2>/dev/null || true)"
   fi
 
-  if [[ -z "$parsed" && -n "$HOOK_STDIN_JSON" ]]; then
+  if [[ -z "$parsed" ]]; then
     parsed="$(hook_json_extract_with_bun "$HOOK_STDIN_JSON" "$path" || true)"
   fi
 
-  if [[ -z "$parsed" && -n "$HOOK_STDIN_JSON" ]]; then
-    echo "[HookInput] WARN: JSON parse failed for path: $path (neither jq nor bun succeeded)" >&2
+  if [[ -z "$parsed" && "${HOOK_STDIN_JSON_VALID:-}" == "" ]]; then
+    echo "[HookInput] WARN: stdin is not valid JSON while requesting path: $path (neither jq nor bun could parse it)" >&2
   fi
 
   if [[ -n "$parsed" ]]; then
@@ -117,6 +159,54 @@ hook_parse_json_arg() {
   hook_json_extract_with_bun "$raw_arg" "$path" || true
 }
 
+hook_normalize_file_path() {
+  # Map an absolute path that lives inside the repo to a repo-relative path so
+  # downstream guards (ContractScopeGuard, _ref/_ops case matchers,
+  # post-edit doc-drift matchers, etc.) can match against repo-relative
+  # patterns like `.ai/hooks/` or `apps/*/src/`. Paths outside the repo are
+  # returned unchanged so out-of-scope detection still works.
+  local raw="$1"
+  local repo_root="${HOOK_REPO_ROOT:-}"
+  local repo_real raw_real
+
+  [[ -z "$raw" ]] && { printf '%s' "$raw"; return; }
+  [[ "$raw" != /* ]] && { printf '%s' "$raw"; return; }
+  [[ -z "$repo_root" ]] && { printf '%s' "$raw"; return; }
+
+  if [[ "$raw" == "$repo_root"/* ]]; then
+    printf '%s' "${raw#"$repo_root"/}"
+    return
+  fi
+
+  # Also handle the symlink case (e.g. macOS /var → /private/var temp dirs)
+  # where the canonical repo path differs from HOOK_REPO_ROOT but they refer
+  # to the same directory.
+  repo_real="$(cd "$repo_root" 2>/dev/null && pwd -P)" || repo_real=""
+  if [[ -n "$repo_real" && "$raw" == "$repo_real"/* ]]; then
+    printf '%s' "${raw#"$repo_real"/}"
+    return
+  fi
+
+  # As a last resort, resolve the raw path's real parent so we can strip the
+  # canonical repo prefix even when the file itself does not exist yet.
+  local raw_dir raw_base
+  raw_dir="$(dirname "$raw")"
+  raw_base="$(basename "$raw")"
+  if raw_real="$(cd "$raw_dir" 2>/dev/null && pwd -P)"; then
+    raw_real="$raw_real/$raw_base"
+    if [[ -n "$repo_real" && "$raw_real" == "$repo_real"/* ]]; then
+      printf '%s' "${raw_real#"$repo_real"/}"
+      return
+    fi
+    if [[ "$raw_real" == "$repo_root"/* ]]; then
+      printf '%s' "${raw_real#"$repo_root"/}"
+      return
+    fi
+  fi
+
+  printf '%s' "$raw"
+}
+
 hook_get_file_path() {
   local arg="${1:-}"
   local parsed=""
@@ -124,23 +214,23 @@ hook_get_file_path() {
   for path in '.file_path' '.tool_input.file_path' '.trigger_file_path' '.parent_file_path'; do
     parsed="$(hook_json_get "$path" '')"
     if [[ -n "$parsed" ]]; then
-      printf '%s' "$parsed"
+      hook_normalize_file_path "$parsed"
       return
     fi
 
     parsed="$(hook_parse_json_arg "$arg" "$path")"
     if [[ -n "$parsed" ]]; then
-      printf '%s' "$parsed"
+      hook_normalize_file_path "$parsed"
       return
     fi
   done
 
   if [[ -n "${CLAUDE_FILE_PATH:-}" ]]; then
-    printf '%s' "$CLAUDE_FILE_PATH"
+    hook_normalize_file_path "$CLAUDE_FILE_PATH"
     return
   fi
 
-  printf '%s' "$arg"
+  hook_normalize_file_path "$arg"
 }
 
 hook_get_prompt() {
@@ -476,6 +566,16 @@ hook_structured_error() {
 
   run_id="$(hook_get_run_id)"
   hook_append_failure_record "$guard" "$action" "$reason" "$fix" "$failure_class" "$run_id"
+
+  # Claude Code shows stderr to the model when the hook exits 2.
+  # Mirror reason/fix there so callers that pair this with `exit 2` produce a
+  # useful block message instead of "Failed with non-blocking status code: No stderr output".
+  if [[ "$action" == "block" ]]; then
+    printf '[%s] %s\n' "$guard" "$reason" >&2
+    if [[ -n "$fix" ]]; then
+      printf '  Fix: %s\n' "$fix" >&2
+    fi
+  fi
 
   printf '{"guard":"%s","action":"%s","reason":"%s","fix":"%s","failure_class":"%s","run_id":"%s"}\n' \
     "$(hook_json_escape "$guard")" \

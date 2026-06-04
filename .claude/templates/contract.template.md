@@ -5,8 +5,8 @@
 > **Owner**: {{OWNER}}
 > **Capability ID**: {{CAPABILITY_ID}}
 > **Last Updated**: {{TIMESTAMP}}
-> **Review File**: `tasks/reviews/{{TASK_SLUG}}.review.md`
-> **Notes File**: `tasks/notes/{{TASK_SLUG}}.notes.md`
+> **Review File**: `{{REVIEW_FILE}}`
+> **Notes File**: `{{NOTES_FILE}}`
 
 ## Goal
 
@@ -17,6 +17,17 @@ Describe the exact outcome this task must deliver.
 - In scope:
 - Out of scope:
 
+## Workflow Inventory
+
+- Source plan: `{{PLAN_FILE}}`
+- Deferred-goal ledger: `tasks/todo.md`
+- Review file: `{{REVIEW_FILE}}`
+- Notes file: `{{NOTES_FILE}}`
+- Checks file: `.ai/harness/checks/latest.json`
+- Run snapshots: `.ai/harness/runs/`
+- Scope gate: edit only paths listed under `allowed_paths`; update this contract before widening scope.
+- Completion gate: `scripts/verify-sprint.sh` must see this contract pass, the review recommend pass, and `## External Acceptance Advice` pass or record a manual override.
+
 ## Allowed Paths
 
 ```yaml
@@ -24,9 +35,9 @@ allowed_paths:
   - docs/spec.md
   - plans/
   - tasks/todo.md
-  - tasks/contracts/{{TASK_SLUG}}.contract.md
-  - tasks/reviews/{{TASK_SLUG}}.review.md
-  - tasks/notes/{{TASK_SLUG}}.notes.md
+  - {{CONTRACT_FILE}}
+  - {{REVIEW_FILE}}
+  - {{NOTES_FILE}}
   - .ai/context/capabilities.json
   - src/
   - tests/
@@ -40,7 +51,7 @@ exit_criteria:
     - docs/spec.md
   artifacts_exist:
     - .ai/harness/checks/latest.json
-    - tasks/notes/{{TASK_SLUG}}.notes.md
+    - {{NOTES_FILE}}
   tests_pass:
     - path: tests/unit/{{TASK_SLUG}}.test.ts
   commands_succeed:

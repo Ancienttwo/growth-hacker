@@ -85,35 +85,116 @@ safe_repo_file() {
 }
 
 latest_plan() {
-  if [[ -f ".claude/.active-plan" ]]; then
+  for marker_file in ".ai/harness/active-plan" ".claude/.active-plan"; do
+    if [[ ! -f "$marker_file" ]]; then
+      continue
+    fi
     local marker
-    marker="$(cat .claude/.active-plan 2>/dev/null | xargs)"
+    marker="$(cat "$marker_file" 2>/dev/null | xargs)"
     if [[ -n "$marker" && -f "$marker" ]]; then
       printf '%s' "$marker"
       return 0
     fi
-  fi
+  done
 
   find plans -maxdepth 1 -type f -name 'plan-*.md' 2>/dev/null | sort | tail -1
 }
 
+plan_slug_from_path() {
+  local plan_file="$1"
+  local base slug
+  base="$(basename "$plan_file")"
+  slug="$(printf '%s' "$base" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
+  printf '%s' "$slug"
+}
+
+plan_original_artifact_stem_from_path() {
+  local plan_file="$1"
+  local base stem
+  base="$(basename "$plan_file")"
+  stem="$(printf '%s' "$base" | sed -E 's/^plan-//; s/\.md$//')"
+  if [[ "$stem" =~ ^[0-9]{8}-[0-9]{4}-.+ ]]; then
+    printf '%s' "$stem"
+  else
+    plan_slug_from_path "$plan_file"
+  fi
+}
+
+is_transient_plan_slug() {
+  case "$1" in
+    think-plan-[0-9]*|codex-plan-[0-9]*|approved-plan-[0-9]*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+plan_title_slug_from_file() {
+  local plan_file="$1"
+  local title slug
+  [[ -f "$plan_file" ]] || return 1
+  title="$(awk '
+    /^# Plan:[[:space:]]*/ {
+      sub(/^# Plan:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$plan_file" | xargs)"
+  [[ -n "$title" ]] || return 1
+  slug="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+  [[ -n "$slug" ]] || return 1
+  printf '%s' "$slug"
+}
+
+plan_artifact_stem_from_path() {
+  local plan_file="$1"
+  local stem stamp slug title_slug
+  stem="$(plan_original_artifact_stem_from_path "$plan_file")"
+  if [[ "$stem" =~ ^[0-9]{8}-[0-9]{4}-.+ ]]; then
+    stamp="$(printf '%s' "$stem" | sed -E 's/^([0-9]{8}-[0-9]{4})-.+$/\1/')"
+    slug="$(printf '%s' "$stem" | sed -E 's/^[0-9]{8}-[0-9]{4}-//')"
+    if is_transient_plan_slug "$slug"; then
+      title_slug="$(plan_title_slug_from_file "$plan_file" || true)"
+      if [[ -n "$title_slug" && "$title_slug" != "$slug" ]]; then
+        printf '%s-%s' "$stamp" "$title_slug"
+        return 0
+      fi
+    fi
+    printf '%s' "$stem"
+  else
+    plan_slug_from_path "$plan_file"
+  fi
+}
+
+preferred_or_legacy_path() {
+  local preferred="$1"
+  local legacy="$2"
+  if [[ -f "$preferred" ]] || [[ ! -f "$legacy" ]]; then
+    printf '%s' "$preferred"
+  else
+    printf '%s' "$legacy"
+  fi
+}
+
 derive_contract() {
   local plan_file="$1"
-  local slug
+  local slug stem
   [[ -n "$plan_file" ]] || return 1
-  slug="$(basename "$plan_file" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
-  [[ -n "$slug" ]] || return 1
-  printf 'tasks/contracts/%s.contract.md' "$slug"
+  slug="$(plan_slug_from_path "$plan_file")"
+  stem="$(plan_artifact_stem_from_path "$plan_file")"
+  [[ -n "$slug" && -n "$stem" ]] || return 1
+  preferred_or_legacy_path "tasks/contracts/${stem}.contract.md" "tasks/contracts/${slug}.contract.md"
 }
 
 derive_notes() {
   local plan_file="$1"
-  local slug notes_dir
+  local slug stem notes_dir
   [[ -n "$plan_file" ]] || return 1
-  slug="$(basename "$plan_file" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
-  [[ -n "$slug" ]] || return 1
+  slug="$(plan_slug_from_path "$plan_file")"
+  stem="$(plan_artifact_stem_from_path "$plan_file")"
+  [[ -n "$slug" && -n "$stem" ]] || return 1
   notes_dir="$(safe_repo_file "$(policy_get '.tasks.notes_dir' 'tasks/notes')" 'tasks/notes' 'tasks/')"
-  printf '%s/%s.notes.md' "$notes_dir" "$slug"
+  preferred_or_legacy_path "${notes_dir}/${stem}.notes.md" "${notes_dir}/${slug}.notes.md"
 }
 
 latest_global_handoff() {
@@ -136,7 +217,7 @@ mkdir -p "$(dirname "$resume_file")"
 
 cat > "$resume_file" <<EOF_RESUME
 # Codex Resume Packet
-<!-- generated-by: project-initializer codex-handoff-resume v1 -->
+<!-- generated-by: repo-harness codex-handoff-resume v1 -->
 
 > **Generated**: $(date '+%Y-%m-%d %H:%M:%S')
 > **Reason**: ${reason}
@@ -145,6 +226,10 @@ cat > "$resume_file" <<EOF_RESUME
 ## Resume Prompt
 
 You are starting a fresh Codex session for an existing long-running task. Do not rely on prior chat history or Codex auto-compact. First read the source artifacts listed below, then continue from the exact next step in the repo handoff.
+
+Current prompt files first:
+- If the current user message lists files under \`# Files mentioned by the user\`, references \`pasted-text.txt\`, or includes an explicit attachment/file path, read those current-input files before the repo recovery artifacts below.
+- Use handoff, resume, and \`tasks/current.md\` as recovery context only; they do not outrank the current user message.
 
 Required first reads:
 - AGENTS.md

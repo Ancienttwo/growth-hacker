@@ -52,7 +52,7 @@ export function checkConsistency(repoRoot: string = REPO_ROOT): ConsistencyResul
       ? (pkg.version as string)
       : null;
 
-  // Read the local source manifest when this script runs inside agentic-dev;
+  // Read the local source manifest when this script runs inside repo-harness;
   // generated projects resolve the upstream skill root instead.
   const localSvPath = join(repoRoot, "assets", "skill-version.json");
   const svPath = existsSync(localSvPath)
@@ -64,15 +64,11 @@ export function checkConsistency(repoRoot: string = REPO_ROOT): ConsistencyResul
   const sv = JSON.parse(readFileSync(svPath, "utf-8"));
   const skillVersionJsonVersion = sv.version as string;
 
-  // Source repos keep package.json.version and skill-version.json in lockstep.
-  // Generated projects use package.json.version as product metadata.
-  if (svPath === localSvPath && packageJsonVersion !== skillVersionJsonVersion) {
-    errors.push(
-      `package.json (${packageJsonVersion}) != skill-version.json (${skillVersionJsonVersion})`
-    );
-  } else if (packageJsonVersion !== null) {
+  // package.json.version is product release metadata. skill-version.json is the
+  // generated workflow/template compatibility line.
+  if (packageJsonVersion !== null) {
     warnings.push(
-      `package.json.version (${packageJsonVersion}) is treated as product release metadata; workflow parity uses upstream agentic-dev skill-version.json only`
+      `package.json.version (${packageJsonVersion}) is treated as product release metadata; workflow parity uses upstream repo-harness skill-version.json only`
     );
   }
 

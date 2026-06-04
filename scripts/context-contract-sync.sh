@@ -38,6 +38,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+architecture_event() {
+  if command -v bun >/dev/null 2>&1 && [[ -f "scripts/architecture-event.ts" ]]; then
+    bun scripts/architecture-event.ts "$@"
+    return $?
+  fi
+  return 127
+}
+
 json_get() {
   local json_input="$1"
   local key="$2"
@@ -45,6 +53,11 @@ json_get() {
 
   if [[ -z "$json_input" ]]; then
     return 1
+  fi
+
+  if parsed="$(architecture_event json-get --key "$key" --json "$json_input" 2>/dev/null)"; then
+    printf '%s' "$parsed"
+    return 0
   fi
 
   if command -v jq >/dev/null 2>&1; then
@@ -85,6 +98,13 @@ try {
 
 safe_token() {
   local value="$1"
+  local parsed=""
+
+  if parsed="$(architecture_event safe-token --value "$value" 2>/dev/null)"; then
+    printf '%s' "$parsed"
+    return 0
+  fi
+
   value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
   value="$(printf '%s' "$value" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
   printf '%s' "${value:-root}"
@@ -92,11 +112,17 @@ safe_token() {
 
 derive_scope() {
   local block="$1"
+  local derived=""
   local block_slug
   local domain_slug
   local capability_slug
   local architecture_module
   local workstream_dir
+
+  if derived="$(architecture_event derive-scope --block "$block" 2>/dev/null)"; then
+    printf '%s\n' "$derived"
+    return 0
+  fi
 
   block_slug="$(safe_token "$block")"
   domain_slug="$block_slug"
@@ -166,7 +192,7 @@ validate_block() {
       return 1
       ;;
   esac
-  [[ -d "$block" ]]
+  [[ -e "$block" ]]
 }
 
 replace_contract_block() {
@@ -214,6 +240,18 @@ sync_context_map() {
   local context_map=".ai/context/context-map.json"
   local runtime=""
 
+  if architecture_event sync-context-map \
+    --context-map "$context_map" \
+    --block "$block" \
+    --capability-id "$capability_id" \
+    --contract-agents "$contract_agents" \
+    --contract-claude "$contract_claude" \
+    --architecture-domain "$domain_slug" \
+    --architecture-capability "$capability_slug" \
+    --lsp-profile "$lsp_profile" 2>/dev/null; then
+    return 0
+  fi
+
   if command -v node >/dev/null 2>&1; then
     runtime="node"
   elif command -v bun >/dev/null 2>&1; then
@@ -232,7 +270,8 @@ sync_context_map() {
   "functional_block_selector": {
     "script": "scripts/select-agent-context-blocks.sh",
     "config_file": ".ai/context/agent-context-blocks.txt",
-    "env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
+    "env": "REPO_HARNESS_CONTEXT_BLOCKS",
+    "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
     "rule": "compatibility selector; capability registry is the source of truth"
   },
   "root_context_files": ["CLAUDE.md", "AGENTS.md"],
@@ -358,10 +397,35 @@ if [[ -z "$architecture_domain" || -z "$architecture_capability" || -z "$archite
   workstream_dir="${workstream_dir:-$(printf '%s\n' "$derived_scope" | sed -n '4p')}"
 fi
 
+if architecture_event sync-contract-files \
+  --functional-block "$functional_block" \
+  --capability-id "$capability_id" \
+  --matched-prefix "$matched_prefix" \
+  --architecture-domain "$architecture_domain" \
+  --architecture-capability "$architecture_capability" \
+  --architecture-module "$architecture_module" \
+  --workstream-dir "$workstream_dir" \
+  --contract-agents "$contract_agents" \
+  --contract-claude "$contract_claude" \
+  --event-ts "${event_ts:-unknown}" \
+  --file-path "${file_path:-unknown}" \
+  --severity "${severity:-unknown}" \
+  --change-type "${change_type:-unknown}" \
+  --request-file "${request_file:-unknown}" \
+  --lsp-profile "$lsp_profile" 2>/dev/null; then
+  sync_context_map "$functional_block" "$architecture_domain" "$architecture_capability" "$capability_id" "$contract_agents" "$contract_claude" "$lsp_profile"
+  echo "[ContextContractSync] Updated $contract_agents and $contract_claude."
+  exit 0
+fi
+
 latest_snapshot="$({ find docs/architecture/snapshots -type f -name "*${block_slug}*.md" 2>/dev/null || true; } | sort | tail -1)"
-latest_diagram="$({ find docs/architecture/diagrams -type f -name "*${block_slug}*.html" 2>/dev/null || true; } | sort | tail -1)"
+latest_human_diagram="$({ find docs/architecture/diagrams -type f -name "*${block_slug}*.html" 2>/dev/null || true; } | sort | tail -1)"
 latest_snapshot="${latest_snapshot:-(none yet)}"
-latest_diagram="${latest_diagram:-(none yet)}"
+latest_human_diagram="${latest_human_diagram:-(none yet)}"
+semantic_diagram_source="$architecture_module"
+if [[ "$latest_snapshot" != "(none yet)" ]]; then
+  semantic_diagram_source="$latest_snapshot"
+fi
 active_workstreams="$(format_active_workstreams "$workstream_dir")"
 
 block_tmp="$(mktemp)"
@@ -387,7 +451,8 @@ cat > "$block_tmp" <<EOF_BLOCK
 - LSP/tooling profile: \`${lsp_profile}\`
 - Verification: Use root required checks plus local commands recorded in this capability contract.
 - Latest snapshot: \`${latest_snapshot}\`
-- Latest diagram: \`${latest_diagram}\`
+- Semantic diagram source: \`${semantic_diagram_source}\`
+- Latest human diagram: \`${latest_human_diagram}\`
 - Pending architecture request: \`${request_file:-unknown}\`
 
 ## Active Workstreams
@@ -397,7 +462,8 @@ ${active_workstreams}
 ## Current Session Projection
 
 - Durable progress lives under \`${workstream_dir}\`.
-- \`tasks/todo.md\` is the current session slice projected from the active workstream.
+- \`tasks/current.md\` is the tracked derived status snapshot; it is not a live lock or task source.
+- \`tasks/todo.md\` is the deferred-goal ledger; current execution slices stay in the active plan's \`## Task Breakdown\`.
 <!-- END ARCHITECTURE CONTRACT -->
 EOF_BLOCK
 

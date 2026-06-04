@@ -2,13 +2,16 @@
   "version": 1,
   "active_plan": {
     "marker_file": ".claude/.active-plan",
+    "legacy_marker_file": ".claude/.active-plan",
     "directory": "plans",
     "archive_directory": "plans/archive",
     "glob": "plan-*.md",
+    "active_worktree_marker_file": ".ai/harness/active-worktree",
     "source_of_truth": "latest non-archived plan or explicit marker"
   },
   "tasks": {
     "todo_file": "tasks/todo.md",
+    "current_status_file": "tasks/current.md",
     "lessons_file": "tasks/lessons.md",
     "research_file": "tasks/research.md",
     "workstreams_dir": "tasks/workstreams",
@@ -51,6 +54,7 @@
       "script": "scripts/select-agent-context-blocks.sh",
       "config_file": ".ai/context/agent-context-blocks.txt",
       "env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
+      "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
       "rule": "compatibility selector; capability registry is the source of truth"
     }
   },
@@ -118,7 +122,10 @@
       "project_path": "icloud/brain/<project>/*",
       "manifest_file": ".ai/harness/brain-manifest.json",
       "drift_check": "scripts/check-brain-manifest.sh",
-      "rule": "external knowledge stores long-lived explanations, runbooks, and patterns only; repo-local contracts, hooks, scripts, checks, and evidence remain authoritative"
+      "sync_script": "scripts/sync-brain-docs.sh",
+      "hook_trigger": "PostToolUse Edit|Write for manifest entries with sync.direction=repo-to-brain",
+      "rule": "external knowledge stores long-lived explanations, runbooks, and patterns only; repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
+      "sync_rule": "only explicitly opted-in repo-to-brain manifest entries may be written to the default brain vault; pointer-only externalized stubs remain check-only"
     }
   },
   "context_budget": {
@@ -147,6 +154,19 @@
     "resume_packet_file": ".ai/harness/handoff/resume.md",
     "global_handoff_dir": "~/.codex/handoffs",
     "auto_start_new_session": false
+  },
+  "plan_capture": {
+    "script": "scripts/capture-plan.sh",
+    "sources": [
+      "codex-plan-mode",
+      "waza-think",
+      "repo-harness-plan"
+    ],
+    "rule": "Codex Plan mode and Waza think planning should capture decision-complete plans into plans/plan-*.md; implementation approval then projects the active approved plan through scripts/plan-to-todo.sh"
+  },
+  "planning": {
+    "pending_orchestration_file": ".ai/harness/planning/pending.json",
+    "source_of_truth": "transient host planning bridge only; plans/ and .ai/harness/active-plan remain authoritative"
   },
   "sidecar_research": {
     "default": true,
@@ -197,6 +217,7 @@
     "worktree_dir_template": "../{{repo}}-wt-{{slug}}",
     "start_script": "scripts/contract-worktree.sh start --plan <plan-file>",
     "finish_script": "scripts/contract-worktree.sh finish",
+    "cleanup_script": "scripts/contract-worktree.sh cleanup --slug <slug>",
     "conflict_signals": [
       "dirty_worktree_overlaps_task_files",
       "current_branch_not_suitable_for_task",
@@ -256,6 +277,7 @@
     ],
     "mode": "guidance-only",
     "detection": "init-migrate",
+    "readiness_gate": "scripts/check-agent-tooling.sh --host codex --strict-readiness",
     "waza": {
       "source_repo": "tw93/Waza",
       "source_url": "https://github.com/tw93/Waza.git",
@@ -300,6 +322,20 @@
     },
     "gbrain": {
       "mcp": "candidate-disabled"
+    },
+    "codegraph": {
+      "package": "@colbymchenry/codegraph",
+      "primary_host": "both",
+      "install_mode": "target-aware-mcp",
+      "codex_config_path": "~/.codex/config.toml",
+      "claude_config_path": "~/.claude.json",
+      "index_dir": ".codegraph",
+      "readiness": "required-for-agent-code-navigation",
+      "hook_policy": "do-not-block-hooks",
+      "install_command": "npm install -g @colbymchenry/codegraph && mkdir -p ~/.local/bin && ln -sfn \"/opt/homebrew/bin/codegraph\" ~/.local/bin/codegraph && PATH=\"/Users/chris/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/chris/.codex/tmp/arg0/codex-arg0FvbvVy:/Users/chris/.config/kaku/zsh/bin:/Users/chris/.local/bin:/Users/chris/.bun/node/bin:/Users/chris/.bun/bin:/Users/chris/.opencode/bin:/Applications/Obsidian.app/Contents/MacOS:/Applications/Codex.app/Contents/Resources:/Applications/Obsidian.app/Contents/MacOS\" repo-harness tools configure codegraph --target codex --location global",
+      "project_init_command": "codegraph init -i .",
+      "sync_command": "codegraph sync .",
+      "vendoring_policy": "do-not-add-package-dependency"
     }
   },
   "agentic_development": {

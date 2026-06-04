@@ -12,14 +12,10 @@
     "waza": {
       "sourceRepo": "tw93/Waza",
       "managedSkills": [
-        "check",
-        "design",
-        "health",
-        "hunt",
-        "learn",
-        "read",
         "think",
-        "write"
+        "hunt",
+        "check",
+        "health"
       ],
       "primaryHost": "codex",
       "codexPrimaryPath": "~/.codex/skills",
@@ -31,7 +27,7 @@
       "requiredSkills": [
         "health",
         "check",
-        "diagram-design"
+        "mermaid"
       ],
       "optionalSkills": [],
       "mode": "codex-runtime-reference",
@@ -39,14 +35,14 @@
       "routes": {
         "workflowHealth": "waza:health",
         "reviewGate": "waza:check",
-        "architectureDiagram": "diagram-design"
+        "architectureDiagram": "mermaid"
       },
       "vendoringPolicy": "do-not-vendor-skill-body"
     },
     "diagramDesign": {
-      "skillName": "diagram-design",
+      "skillName": "mermaid",
       "primaryHost": "codex",
-      "codexPrimaryPath": "~/.codex/skills/diagram-design",
+      "codexPrimaryPath": "~/.codex/skills/mermaid",
       "syncMode": "external-installed-skill",
       "vendoringPolicy": "do-not-vendor"
     }
@@ -81,9 +77,12 @@
       "new-spec.sh",
       "new-sprint.sh",
       "new-plan.sh",
+      "capture-plan.sh",
       "plan-to-todo.sh",
       "contract-worktree.sh",
+      "ship-worktrees.sh",
       "archive-workflow.sh",
+      "refresh-current-status.sh",
       "prepare-handoff.sh",
       "verify-contract.sh",
       "summarize-failures.sh",
@@ -93,6 +92,7 @@
       "check-agent-tooling.sh",
       "check-context-files.sh",
       "check-brain-manifest.sh",
+      "sync-brain-docs.sh",
       "check-skill-version.ts",
       "select-agent-context-blocks.sh",
       "ensure-task-workflow.sh",
@@ -105,6 +105,7 @@
       "migrate-project-template.sh",
       "context-budget.ts",
       "capability-resolver.ts",
+      "architecture-event.ts",
       "capability-config.ts",
       "architecture-drift.sh",
       "archive-architecture-request.sh",
@@ -132,6 +133,8 @@
       ".ai/harness/failures",
       ".ai/harness/handoff",
       ".ai/harness/context-budget",
+      ".ai/harness/security",
+      ".ai/harness/planning",
       ".ai/harness/architecture",
       ".ai/harness/worktrees",
       ".ai/harness/runs",
@@ -161,9 +164,12 @@
       "scripts/new-spec.sh",
       "scripts/new-sprint.sh",
       "scripts/new-plan.sh",
+      "scripts/capture-plan.sh",
       "scripts/plan-to-todo.sh",
       "scripts/contract-worktree.sh",
+      "scripts/ship-worktrees.sh",
       "scripts/archive-workflow.sh",
+      "scripts/refresh-current-status.sh",
       "scripts/prepare-handoff.sh",
       "scripts/verify-contract.sh",
       "scripts/summarize-failures.sh",
@@ -172,6 +178,7 @@
       "scripts/check-deploy-sql-order.sh",
       "scripts/check-agent-tooling.sh",
       "scripts/check-context-files.sh",
+      "scripts/sync-brain-docs.sh",
       "scripts/check-skill-version.ts",
       "scripts/select-agent-context-blocks.sh",
       "scripts/ensure-task-workflow.sh",
@@ -184,6 +191,7 @@
       "scripts/migrate-project-template.sh",
       "scripts/context-budget.ts",
       "scripts/capability-resolver.ts",
+      "scripts/architecture-event.ts",
       "scripts/capability-config.ts",
       "scripts/architecture-drift.sh",
       "scripts/archive-architecture-request.sh",
@@ -191,12 +199,14 @@
       "scripts/workstream-sync.sh",
       "scripts/prepare-codex-handoff.sh",
       "scripts/codex-handoff-resume.sh",
+      "tasks/current.md",
       "tasks/todo.md",
       "tasks/lessons.md",
       "tasks/research.md",
       "docs/architecture/index.md",
       ".ai/context/context-map.json",
       ".ai/context/capabilities.json",
+      ".ai/context/capability-source-map.json",
       ".ai/harness/policy.json",
       ".ai/harness/brain-manifest.json",
       ".ai/harness/workflow-contract.json",
@@ -211,12 +221,18 @@
     ],
     "runtimeFiles": [
       ".ai/harness/checks/latest.json",
+      ".ai/harness/checks/post-bash-latest.json",
       ".ai/harness/events.jsonl",
       ".ai/harness/failures/latest.jsonl",
       ".ai/harness/handoff/current.md",
       ".ai/harness/handoff/resume.md",
       ".ai/harness/context-budget/latest.json",
+      ".ai/harness/capability-context/",
+      ".ai/harness/security/.gitkeep",
+      ".ai/harness/planning/",
       ".ai/harness/architecture/events.jsonl",
+      ".ai/harness/active-plan",
+      ".ai/harness/active-worktree",
       ".ai/harness/worktrees/",
       ".ai/harness/runs/.gitkeep"
     ]
@@ -224,7 +240,7 @@
   "documents": {
     "spec": "docs/spec.md",
     "planDirectory": "plans",
-    "taskChecklist": "tasks/todo.md",
+    "deferredGoalLedger": "tasks/todo.md",
     "researchNotes": "tasks/research.md",
     "implementationNotesDirectory": "tasks/notes",
     "lessonsLog": "tasks/lessons.md"
@@ -421,9 +437,10 @@
           "ownership": "user_local",
           "paths": [
             "_ref/",
+            ".codegraph/",
             "_ops/"
           ],
-          "summary": "Never migrate, delete, or vendor ignored external references, private operations state, secrets, or local environment values."
+          "summary": "Never migrate, delete, or vendor ignored external references, local CodeGraph indexes, private operations state, secrets, or local environment values."
         }
       ]
     }

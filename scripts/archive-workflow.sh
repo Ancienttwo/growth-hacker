@@ -47,6 +47,57 @@ unique_archive_path() {
   printf '%s' "$candidate"
 }
 
+normalize_slug() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g'
+}
+
+is_transient_plan_slug() {
+  case "$1" in
+    think-plan-[0-9]*|codex-plan-[0-9]*|approved-plan-[0-9]*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+plan_title_slug_from_file() {
+  local plan_file="$1"
+  local title slug
+  [[ -f "$plan_file" ]] || return 1
+  title="$(awk '
+    /^# Plan:[[:space:]]*/ {
+      sub(/^# Plan:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$plan_file" | xargs)"
+  [[ -n "$title" ]] || return 1
+  slug="$(normalize_slug "$title")"
+  [[ -n "$slug" ]] || return 1
+  printf '%s' "$slug"
+}
+
+plan_artifact_stem_from_parts() {
+  local plan_file="$1"
+  local original_stem="$2"
+  local slug="$3"
+  local stamp title_slug
+
+  if [[ "$original_stem" =~ ^[0-9]{8}-[0-9]{4}-.+ ]]; then
+    stamp="$(printf '%s' "$original_stem" | sed -E 's/^([0-9]{8}-[0-9]{4})-.+$/\1/')"
+    if is_transient_plan_slug "$slug"; then
+      title_slug="$(plan_title_slug_from_file "$plan_file" || true)"
+      if [[ -n "$title_slug" && "$title_slug" != "$slug" ]]; then
+        printf '%s-%s' "$stamp" "$title_slug"
+        return 0
+      fi
+    fi
+    printf '%s' "$original_stem"
+  else
+    printf '%s' "$slug"
+  fi
+}
+
 plan_file=""
 outcome=""
 
@@ -106,6 +157,8 @@ timestamp="$(date +%Y%m%d-%H%M)"
 timestamp_human="$(date '+%Y-%m-%d %H:%M')"
 plan_base="$(basename "$plan_file")"
 slug="$(echo "$plan_base" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
+original_artifact_stem="$(printf '%s' "$plan_base" | sed -E 's/^plan-//; s/\.md$//')"
+artifact_stem="$(plan_artifact_stem_from_parts "$plan_file" "$original_artifact_stem" "$slug")"
 parent_run_id="${HOOK_RUN_ID:-${CLAUDE_RUN_ID:-${CODEX_RUN_ID:-run-${timestamp}}}}"
 todo_source_plan="$(awk -F': ' '/^\> \*\*Source Plan\*\*:/ {print $2; exit}' tasks/todo.md 2>/dev/null | xargs)"
 
@@ -135,7 +188,10 @@ if [[ -f tasks/todo.md ]] && grep -q '[^[:space:]]' tasks/todo.md; then
   } > "$archive_todo"
 fi
 
-notes_file="tasks/notes/${slug}.notes.md"
+notes_file="tasks/notes/${artifact_stem}.notes.md"
+if [[ ! -f "$notes_file" && -f "tasks/notes/${slug}.notes.md" ]]; then
+  notes_file="tasks/notes/${slug}.notes.md"
+fi
 if [[ -f "$notes_file" ]]; then
   archive_notes="$(unique_archive_path "tasks/archive/notes-${timestamp}-${slug}.md")"
   {
@@ -151,24 +207,37 @@ if [[ -f "$notes_file" ]]; then
 fi
 
 cat > tasks/todo.md <<'TODO_EOF'
-# Task Execution Checklist (Primary)
+# Deferred Goal Ledger
 
-> **Source Plan**: (none)
-> **Status**: Idle
-> Generate the next execution checklist from an approved plan with:
->   bash scripts/plan-to-todo.sh --plan plans/plan-YYYYMMDD-HHMM-slug.md
+> **Status**: Backlog
+> **Updated**: (archive-workflow)
+> **Scope**: Medium/long-term goals deferred from active plan execution
 
-## Execution
-- [ ] No active execution checklist
+Current plan tasks live in the active plan's `## Task Breakdown`.
+Do not duplicate that execution checklist here. Record only work intentionally deferred beyond this slice, with the tradeoff and revisit trigger.
+
+## Deferred Goals
+
+| Goal | Why Deferred | Tradeoff | Revisit Trigger |
+|------|--------------|----------|-----------------|
+| (none) | Archived workflow did not leave a deferred medium/long-term goal. | Keep the next slice clean. | Add a row when a real follow-up is postponed. |
 TODO_EOF
 
-# Clear active-plan marker if it pointed to the archived plan
-if [[ -f ".claude/.active-plan" ]]; then
-  marker_value="$(cat ".claude/.active-plan" 2>/dev/null | xargs)"
-  if [[ "$marker_value" == "$plan_file" || "$marker_value" == "./$plan_file" ]]; then
-    rm -f ".claude/.active-plan"
-    echo "Cleared .claude/.active-plan (archived plan was active)"
+# Clear active-plan markers if they pointed to the archived plan
+cleared_active=0
+for marker_file in ".ai/harness/active-plan" ".claude/.active-plan"; do
+  if [[ ! -f "$marker_file" ]]; then
+    continue
   fi
+  marker_value="$(cat "$marker_file" 2>/dev/null | xargs)"
+  if [[ "$marker_value" == "$plan_file" || "$marker_value" == "./$plan_file" ]]; then
+    rm -f "$marker_file"
+    cleared_active=1
+    echo "Cleared $marker_file (archived plan was active)"
+  fi
+done
+if [[ "$cleared_active" -eq 1 ]]; then
+  rm -f ".ai/harness/active-worktree"
 fi
 
 # Clean up saved plan state backups
@@ -176,6 +245,10 @@ plan_key="$(basename "$plan_file" .md)"
 rm -f ".claude/.plan-state/${plan_key}.todo.md.bak"
 rm -f ".claude/.plan-state/${plan_key}.task-state.json.bak"
 rm -f ".claude/.plan-state/${plan_key}.task-handoff.md.bak"
+
+if [[ -x "scripts/refresh-current-status.sh" ]]; then
+  bash "scripts/refresh-current-status.sh" --clear --write --reason "archive-workflow" || true
+fi
 
 echo "Archived plan to: $archive_plan_path"
 if [[ -f "docs/reference-configs/handoff-protocol.md" ]]; then

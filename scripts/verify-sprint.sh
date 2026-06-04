@@ -73,6 +73,15 @@ else
   echo "Sprint review does not recommend pass" >&2
 fi
 
+external_status="missing"
+external_reviewer=""
+external_source=""
+external_message="External acceptance status is unavailable."
+if declare -F workflow_external_acceptance_status >/dev/null 2>&1; then
+  external_row="$(workflow_external_acceptance_status "$review_file")"
+  IFS=$'\t' read -r external_status external_reviewer external_source external_message <<< "$external_row"
+fi
+
 status="fail"
 exit_code=1
 if [[ "$contract_exit" -eq 0 && "$review_status" == "pass" ]]; then
@@ -96,6 +105,10 @@ if command -v jq >/dev/null 2>&1 && jq -e . "$contract_report" >/dev/null 2>&1; 
     --arg review_file "${review_file:-}" \
     --arg review_status "$review_status" \
     --arg review_message "$review_message" \
+    --arg external_status "$external_status" \
+    --arg external_reviewer "$external_reviewer" \
+    --arg external_source "$external_source" \
+    --arg external_message "$external_message" \
     --argjson exit_code "$exit_code" \
     '{
       status: $status,
@@ -121,6 +134,12 @@ if command -v jq >/dev/null 2>&1 && jq -e . "$contract_report" >/dev/null 2>&1; 
         file: $review_file,
         status: $review_status,
         message: $review_message
+      },
+      external_acceptance: {
+        status: $external_status,
+        reviewer: $external_reviewer,
+        source: $external_source,
+        message: $external_message
       }
     }' > "$checks_report"
 else
@@ -148,6 +167,12 @@ else
     "file": "$(json_escape "${review_file:-}")",
     "status": "$(json_escape "$review_status")",
     "message": "$(json_escape "$review_message")"
+  },
+  "external_acceptance": {
+    "status": "$(json_escape "$external_status")",
+    "reviewer": "$(json_escape "$external_reviewer")",
+    "source": "$(json_escape "$external_source")",
+    "message": "$(json_escape "$external_message")"
   }
 }
 EOF_CHECKS

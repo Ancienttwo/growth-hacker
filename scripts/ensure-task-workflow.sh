@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR/.."
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: scripts/ensure-task-workflow.sh [--slug <slug>] [--title <title>]
+Usage: scripts/ensure-task-workflow.sh [--new-plan] [--slug <slug>] [--title <title>]
 USAGE_EOF
 }
 
@@ -14,22 +14,27 @@ normalize_slug() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g'
 }
 
-get_active_plan() {
-  if [[ -f ".claude/.active-plan" ]]; then
-    local marker_plan
-    marker_plan="$(cat ".claude/.active-plan" 2>/dev/null | xargs)"
+ACTIVE_PLAN_MARKER=".ai/harness/active-plan"
+LEGACY_ACTIVE_PLAN_MARKER=".claude/.active-plan"
+
+read_active_plan_marker() {
+  local marker_file="$1"
+  local marker_plan
+
+  if [[ -f "$marker_file" ]]; then
+    marker_plan="$(cat "$marker_file" 2>/dev/null | xargs)"
     if [[ -n "$marker_plan" && -f "$marker_plan" ]]; then
       printf '%s' "$marker_plan"
       return 0
     fi
   fi
-  local latest
-  latest="$(find plans -maxdepth 1 -type f -name 'plan-*.md' 2>/dev/null | sort | tail -1)"
-  if [[ -n "$latest" ]]; then
-    printf '%s' "$latest"
-    return 0
-  fi
+
   return 1
+}
+
+get_active_plan() {
+  read_active_plan_marker "$ACTIVE_PLAN_MARKER" \
+    || read_active_plan_marker "$LEGACY_ACTIVE_PLAN_MARKER"
 }
 
 ensure_templates() {
@@ -104,8 +109,33 @@ RESEARCH_TEMPLATE_EOF
 > **Status**: Draft
 > **Created**: {{TIMESTAMP}}
 > **Slug**: {{SLUG}}
+> **Spec**: `docs/spec.md`
 > **Research**: See `tasks/research.md`
-> **Implementation Notes**: `tasks/notes/{{SLUG}}.notes.md`
+> **Sprint Contract**: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+> **Sprint Review**: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+> **Implementation Notes**: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
+
+## Agentic Routing
+- Selected route:
+- Routing reason:
+- Due diligence:
+  - P1 map:
+  - P2 trace:
+  - P3 decision rationale:
+
+## Workflow Inventory
+Complete this inventory before implementation. If any line is unknown, keep the plan in Draft and fill it before projection.
+
+- Active plan: `{{PLAN_FILE}}`
+- Sprint contract: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+- Sprint review: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+- Implementation notes: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
+- Deferred-goal ledger: `tasks/todo.md`
+- Current checks: `.ai/harness/checks/latest.json`
+- Run snapshots: `.ai/harness/runs/`
+- Scope authority: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md` `allowed_paths`
+- Concurrency rule: `.ai/harness/active-plan` selects the active plan for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. If another worktree already owns active work, open or switch to the matching worktree instead of serializing unrelated plans.
+- Execution isolation: approved contract-level work projects through `scripts/plan-to-todo.sh --plan {{PLAN_FILE}}` and may start `scripts/contract-worktree.sh start --plan {{PLAN_FILE}}`.
 
 ## Approach
 ### Strategy
@@ -126,10 +156,17 @@ RESEARCH_TEMPLATE_EOF
 |------|------------|--------|------------|
 
 ## Task Contracts
-- Contract file: `tasks/contracts/{{SLUG}}.contract.md`
-- Implementation notes file: `tasks/notes/{{SLUG}}.notes.md`
+- Contract file: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+- Review file: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+- Implementation notes file: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
 - Template: `.claude/templates/contract.template.md`
-- Verification command: `bash scripts/verify-contract.sh --contract tasks/contracts/{{SLUG}}.contract.md --strict`
+- Verification command: `bash scripts/verify-contract.sh --contract tasks/contracts/{{ARTIFACT_STEM}}.contract.md --strict`
+- Active plan rule: `.ai/harness/active-plan` is authoritative for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. Do not infer active execution from the latest non-archived plan.
+
+## Handoff
+
+- Checks file: `.ai/harness/checks/latest.json`
+- Session handoff: `.ai/harness/handoff/current.md`
 
 ## Evidence Contract
 
@@ -156,8 +193,8 @@ PLAN_TEMPLATE_EOF
 > **Owner**: {{OWNER}}
 > **Capability ID**: {{CAPABILITY_ID}}
 > **Last Updated**: {{TIMESTAMP}}
-> **Review File**: `tasks/reviews/{{TASK_SLUG}}.review.md`
-> **Notes File**: `tasks/notes/{{TASK_SLUG}}.notes.md`
+> **Review File**: `{{REVIEW_FILE}}`
+> **Notes File**: `{{NOTES_FILE}}`
 
 ## Goal
 
@@ -168,15 +205,26 @@ Describe the exact outcome this task must deliver.
 - In scope:
 - Out of scope:
 
+## Workflow Inventory
+
+- Source plan: `{{PLAN_FILE}}`
+- Deferred-goal ledger: `tasks/todo.md`
+- Review file: `{{REVIEW_FILE}}`
+- Notes file: `{{NOTES_FILE}}`
+- Checks file: `.ai/harness/checks/latest.json`
+- Run snapshots: `.ai/harness/runs/`
+- Scope gate: edit only paths listed under `allowed_paths`; update this contract before widening scope.
+- Completion gate: `scripts/verify-sprint.sh` must see this contract pass, the review recommend pass, and `## External Acceptance Advice` pass or record a manual override.
+
 ## Allowed Paths
 
 ```yaml
 allowed_paths:
   - plans/
   - tasks/todo.md
-  - tasks/contracts/{{TASK_SLUG}}.contract.md
-  - tasks/reviews/{{TASK_SLUG}}.review.md
-  - tasks/notes/{{TASK_SLUG}}.notes.md
+  - {{CONTRACT_FILE}}
+  - {{REVIEW_FILE}}
+  - {{NOTES_FILE}}
   - .ai/context/capabilities.json
   - src/
   - tests/
@@ -188,7 +236,7 @@ allowed_paths:
 exit_criteria:
   files_exist:
     - src/modules/{{TASK_SLUG}}/index.ts
-    - tasks/notes/{{TASK_SLUG}}.notes.md
+    - {{NOTES_FILE}}
   tests_pass:
     - path: tests/unit/{{TASK_SLUG}}.test.ts
   commands_succeed:
@@ -222,6 +270,25 @@ CONTRACT_TEMPLATE_EOF
 > **Checks File**: {{CHECKS_FILE}}
 > **Last Updated**: {{TIMESTAMP}}
 > **Recommendation**: fail
+
+## Verification Evidence
+
+- Waza /check run:
+- Commands run:
+- Manual checks:
+- Supporting artifacts:
+
+## External Acceptance Advice
+
+> **External Acceptance**: unavailable
+> **External Reviewer**:
+> **External Source**:
+> **External Started**:
+> **External Completed**:
+
+- P1 blockers:
+- P2 advisories:
+- Acceptance checklist:
 
 ## Scorecard
 
@@ -294,21 +361,55 @@ ensure_idle_todo() {
   mkdir -p tasks
   if [[ ! -f "tasks/todo.md" ]]; then
     cat > tasks/todo.md <<'TODO_EOF'
-# Task Execution Checklist (Primary)
+# Deferred Goal Ledger
 
-> **Source Plan**: (none)
-> **Status**: Idle
-> Generate the next execution checklist from an approved plan with:
->   bash scripts/plan-to-todo.sh --plan plans/plan-YYYYMMDD-HHMM-slug.md
+> **Status**: Backlog
+> **Updated**: (ensure-task-workflow)
+> **Scope**: Medium/long-term goals deferred from active plan execution
 
-## Execution
-- [ ] No active execution checklist
+Current plan tasks live in the active plan's `## Task Breakdown`.
+Do not duplicate that execution checklist here. Record only work intentionally deferred beyond this slice, with the tradeoff and revisit trigger.
+
+## Deferred Goals
+
+| Goal | Why Deferred | Tradeoff | Revisit Trigger |
+|------|--------------|----------|-----------------|
+| (none) | No deferred medium/long-term goal recorded yet. | Keep the current slice bounded. | Add a row when a real follow-up is postponed. |
 TODO_EOF
   fi
 }
 
+ensure_current_status_snapshot() {
+  mkdir -p tasks
+  if [[ -x "scripts/refresh-current-status.sh" ]]; then
+    bash "scripts/refresh-current-status.sh" --clear --write --reason "ensure-task-workflow" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  if [[ ! -f "tasks/current.md" ]]; then
+    cat > tasks/current.md <<'CURRENT_STATUS_EOF'
+# Current Status Snapshot
+
+<!-- generated-by: repo-harness refresh-current-status v1 -->
+<!-- updated_at: bootstrap -->
+<!-- stale_after: 24h -->
+
+> **Status**: Idle
+> **Updated At**: bootstrap
+> **Source Branch**: main
+> **Source Commit**: bootstrap
+> **Target Branch**: main
+> **Stale After**: 24h
+> **Reason**: bootstrap
+> **Derived From**: active-plan, workstreams, handoff, checks, git status
+
+This file is a tracked mainline snapshot derived from repo artifacts. It is not a live lock, not a kanban board, and not an implementation gate. If it is stale, read the source artifacts below.
+CURRENT_STATUS_EOF
+  fi
+}
+
 ensure_auxiliary_files() {
-  mkdir -p plans plans/archive tasks/archive tasks/contracts tasks/reviews tasks/notes tasks/workstreams docs/architecture/domains docs/architecture/modules docs/architecture/requests docs/architecture/snapshots docs/architecture/diagrams scripts .ai/context .ai/harness/checks .ai/harness/handoff .ai/harness/context-budget .ai/harness/failures .ai/harness/architecture .ai/harness/worktrees .ai/harness/runs
+  mkdir -p plans plans/archive tasks/archive tasks/contracts tasks/reviews tasks/notes tasks/workstreams docs/architecture/domains docs/architecture/modules docs/architecture/requests docs/architecture/snapshots docs/architecture/diagrams scripts .ai/context .ai/harness/checks .ai/harness/handoff .ai/harness/context-budget .ai/harness/failures .ai/harness/security .ai/harness/planning .ai/harness/architecture .ai/harness/worktrees .ai/harness/runs
 
   if [[ ! -f "docs/spec.md" ]]; then
     cat > docs/spec.md <<'SPEC_EOF'
@@ -400,6 +501,10 @@ RESUME_EOF
     : > ".ai/harness/failures/latest.jsonl"
   fi
 
+  if [[ ! -f ".ai/harness/security/.gitkeep" ]]; then
+    : > ".ai/harness/security/.gitkeep"
+  fi
+
   if [[ ! -f ".ai/harness/runs/.gitkeep" ]]; then
     : > ".ai/harness/runs/.gitkeep"
   fi
@@ -449,7 +554,8 @@ CAPABILITIES_EOF
 ## Current Snapshot
 
 - Latest snapshot: (none yet)
-- Latest diagram: (none yet)
+- Semantic diagram source: (none yet)
+- Latest human diagram: (none yet)
 
 ## Architecture Drift Flow
 
@@ -457,7 +563,8 @@ CAPABILITIES_EOF
 - `scripts/archive-architecture-request.sh` archives handled requests after an agent records the resolution status and linked artifacts.
 - `scripts/context-contract-sync.sh` keeps only the controlled architecture block in functional-block `AGENTS.md` and `CLAUDE.md` files aligned.
 - `scripts/workstream-sync.sh` keeps durable multi-session progress under `tasks/workstreams/<domain>/<capability>/` and projects only pointers into local contracts.
-- Architecture diagrams are standalone HTML files in `docs/architecture/diagrams/`; when generated by an agent, use the `diagram-design` architecture type and keep the diagram self-contained.
+- Semantic architecture diagrams live as Mermaid fenced blocks in the relevant module or snapshot Markdown.
+- Human-readable architecture diagrams are optional `mermaid` HTML files in `docs/architecture/diagrams/` and should link back to the Markdown semantic source.
 
 ## Pending Requests
 
@@ -469,14 +576,17 @@ ARCHITECTURE_INDEX_EOF
 {
   "version": 1,
   "active_plan": {
-    "marker_file": ".claude/.active-plan",
+    "marker_file": ".ai/harness/active-plan",
+    "legacy_marker_file": ".claude/.active-plan",
     "directory": "plans",
     "archive_directory": "plans/archive",
     "glob": "plan-*.md",
-    "source_of_truth": "latest non-archived plan or explicit marker"
+    "active_worktree_marker_file": ".ai/harness/active-worktree",
+    "source_of_truth": "per-worktree explicit marker with active-worktree owner; legacy Claude marker fallback only"
   },
   "tasks": {
     "todo_file": "tasks/todo.md",
+    "current_status_file": "tasks/current.md",
     "lessons_file": "tasks/lessons.md",
     "research_file": "tasks/research.md",
     "workstreams_dir": "tasks/workstreams",
@@ -502,12 +612,12 @@ ARCHITECTURE_INDEX_EOF
     "map_file": ".ai/context/context-map.json",
     "capability_registry_file": ".ai/context/capabilities.json",
     "capability_resolver": "scripts/capability-resolver.ts",
-    "capability_config": "scripts/capability-config.ts",
     "capability_match_rule": "longest-prefix; same-length ambiguity fails",
     "functional_block_selector": {
       "script": "scripts/select-agent-context-blocks.sh",
       "config_file": ".ai/context/agent-context-blocks.txt",
-      "env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
+      "env": "REPO_HARNESS_CONTEXT_BLOCKS",
+      "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
       "rule": "compatibility selector; capability registry is the source of truth"
     }
   },
@@ -527,8 +637,8 @@ ARCHITECTURE_INDEX_EOF
     "diagrams_dir": "docs/architecture/diagrams",
     "domains_dir": "docs/architecture/domains",
     "modules_dir": "docs/architecture/modules",
-    "diagram_skill": "diagram-design",
-    "diagram_skill_source": "~/.codex/skills/diagram-design",
+    "diagram_skill": "mermaid",
+    "diagram_skill_source": "~/.codex/skills/mermaid",
     "vendoring_policy": "do-not-vendor-diagram-skill-assets",
     "contract_block_begin": "<!-- BEGIN ARCHITECTURE CONTRACT -->",
     "contract_block_end": "<!-- END ARCHITECTURE CONTRACT -->",
@@ -539,7 +649,7 @@ ARCHITECTURE_INDEX_EOF
     "scope": "capability",
     "projection": "local-contract-active-pointer-and-current-slice",
     "todo_projection": "tasks/todo.md",
-    "rule": "durable multi-session progress lives under tasks/workstreams/<domain>/<capability>; local contracts only project pointers"
+    "rule": "durable multi-session progress lives under tasks/workstreams/<domain>/<capability>; current plan execution lives in the plan Task Breakdown; tasks/todo.md records deferred goals only"
   },
   "information_lifecycle": {
     "notes": {
@@ -561,11 +671,14 @@ ARCHITECTURE_INDEX_EOF
       "rule": "memory is advisory; current repo state and evidence override summaries"
     },
     "external_knowledge": {
-      "default_brain_path": "icloud/brain/<project>/*",
-      "project_path": "icloud/brain/<project>/*",
+      "default_brain_path": "brain/<project>/*",
+      "project_path": "brain/<project>/*",
       "manifest_file": ".ai/harness/brain-manifest.json",
       "drift_check": "scripts/check-brain-manifest.sh",
-      "rule": "external knowledge stores long-lived explanations, runbooks, and patterns only; repo-local contracts, hooks, scripts, checks, and evidence remain authoritative"
+      "sync_script": "scripts/sync-brain-docs.sh",
+      "hook_trigger": "PostToolUse Edit|Write for manifest entries with sync.direction=repo-to-brain",
+      "rule": "external knowledge stores long-lived explanations, runbooks, and patterns only; repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
+      "sync_rule": "only explicitly opted-in repo-to-brain manifest entries may be written to the default brain vault; pointer-only externalized stubs remain check-only"
     }
   },
   "context_budget": {
@@ -590,6 +703,15 @@ ARCHITECTURE_INDEX_EOF
     "resume_packet_file": ".ai/harness/handoff/resume.md",
     "global_handoff_dir": "~/.codex/handoffs",
     "auto_start_new_session": false
+  },
+  "plan_capture": {
+    "script": "scripts/capture-plan.sh",
+    "sources": ["codex-plan-mode", "waza-think", "repo-harness-plan"],
+    "rule": "Codex Plan mode and Waza think planning should capture decision-complete plans into plans/plan-*.md; implementation approval then projects the active approved plan through scripts/plan-to-todo.sh"
+  },
+  "planning": {
+    "pending_orchestration_file": ".ai/harness/planning/pending.json",
+    "source_of_truth": "transient host planning bridge only; plans/ and .ai/harness/active-plan remain authoritative"
   },
   "sidecar_research": {
     "default": true,
@@ -619,6 +741,7 @@ ARCHITECTURE_INDEX_EOF
     "worktree_dir_template": "../{{repo}}-wt-{{slug}}",
     "start_script": "scripts/contract-worktree.sh start --plan <plan-file>",
     "finish_script": "scripts/contract-worktree.sh finish",
+    "cleanup_script": "scripts/contract-worktree.sh cleanup --slug <slug>",
     "conflict_signals": [
       "dirty_worktree_overlaps_task_files",
       "current_branch_not_suitable_for_task",
@@ -672,12 +795,13 @@ ARCHITECTURE_INDEX_EOF
       "claude-code",
       "codex"
     ],
-    "mode": "guidance-only",
+    "mode": "agent-readiness-required",
     "detection": "init-migrate",
+    "readiness_gate": "scripts/check-agent-tooling.sh --host codex --strict-readiness",
     "waza": {
       "source_repo": "tw93/Waza",
       "source_url": "https://github.com/tw93/Waza.git",
-      "managed_skills": ["check", "design", "health", "hunt", "learn", "read", "think", "write"],
+      "managed_skills": ["think", "hunt", "check", "health"],
       "primary_host": "codex",
       "codex_primary_path": "~/.codex/skills",
       "staging_cache_path": "~/.agents/skills",
@@ -685,26 +809,40 @@ ARCHITECTURE_INDEX_EOF
       "host_drift_policy": "report-per-host-version-staging-and-upstream-drift"
     },
     "codex_automation_profile": {
-      "required_skills": ["health", "check", "diagram-design"],
+      "required_skills": ["health", "check", "mermaid"],
       "optional_skills": [],
       "mode": "codex-runtime-reference",
       "source": "~/.codex/skills",
       "routes": {
         "workflow_health": "waza:health",
         "review_gate": "waza:check",
-        "architecture_diagram": "diagram-design"
+        "architecture_diagram": "mermaid"
       },
       "vendoring_policy": "do-not-vendor-skill-body"
     },
     "diagram_design": {
-      "skill_name": "diagram-design",
+      "skill_name": "mermaid",
       "primary_host": "codex",
-      "codex_primary_path": "~/.codex/skills/diagram-design",
+      "codex_primary_path": "~/.codex/skills/mermaid",
       "sync_mode": "external-installed-skill",
       "vendoring_policy": "do-not-vendor"
     },
     "gbrain": {
       "mcp": "candidate-disabled"
+    },
+    "codegraph": {
+      "package": "@colbymchenry/codegraph",
+      "primary_host": "both",
+      "install_mode": "target-aware-mcp",
+      "codex_config_path": "~/.codex/config.toml",
+      "claude_config_path": "~/.claude.json",
+      "index_dir": ".codegraph",
+      "readiness": "required-for-agent-code-navigation",
+      "hook_policy": "do-not-block-hooks",
+      "install_command": "npm install -g @colbymchenry/codegraph && mkdir -p ~/.local/bin && ln -sfn \"$(npm config get prefix)/bin/codegraph\" ~/.local/bin/codegraph && PATH=\"$HOME/.local/bin:$PATH\" repo-harness tools configure codegraph --target codex --location global",
+      "project_init_command": "codegraph init -i .",
+      "sync_command": "codegraph sync .",
+      "vendoring_policy": "do-not-add-package-dependency"
     }
   },
   "agentic_development": {
@@ -736,12 +874,11 @@ POLICY_EOF
   "version": 1,
   "project": "<project>",
   "mode": "repo-contract-external-knowledge",
-  "default_brain_path": "icloud/brain/<project>/*",
-  "legacy_paths": [],
+  "default_brain_path": "brain/<project>/*",
   "rules": [
     "repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
     "default brain stores long-lived explanations, runbooks, decisions, references, and patterns",
-    "hook runtime must not query gbrain, iCloud, MCP, or default brain"
+    "hook runtime may sync explicitly opted-in repo-to-brain entries only; it must not query gbrain, MCP, or unregistered default brain paths"
   ],
   "entries": []
 }
@@ -756,7 +893,8 @@ BRAIN_MANIFEST_EOF
   "functional_block_selector": {
     "script": "scripts/select-agent-context-blocks.sh",
     "config_file": ".ai/context/agent-context-blocks.txt",
-    "env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
+    "env": "REPO_HARNESS_CONTEXT_BLOCKS",
+    "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
     "rule": "compatibility selector; capability registry is the source of truth"
   },
   "lsp_profiles": {
@@ -767,6 +905,7 @@ BRAIN_MANIFEST_EOF
     "CLAUDE.md",
     "AGENTS.md",
     "docs/spec.md",
+    "tasks/current.md",
     "tasks/todo.md",
     "tasks/lessons.md",
     ".ai/context/capabilities.json",
@@ -797,9 +936,14 @@ CONTEXT_EOF
 
 slug=""
 title=""
+new_plan=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --new-plan)
+      new_plan=1
+      shift
+      ;;
     --slug)
       [[ -n "${2:-}" ]] || { echo "Error: --slug requires a value" >&2; usage; exit 1; }
       slug="$2"
@@ -825,9 +969,10 @@ done
 ensure_templates
 ensure_auxiliary_files
 ensure_idle_todo
+ensure_current_status_snapshot
 
 active_plan="$(get_active_plan || true)"
-if [[ -n "$active_plan" ]]; then
+if [[ -n "$active_plan" && "$new_plan" -eq 0 ]]; then
   echo "Workflow ready. Active plan: $active_plan"
   exit 0
 fi
@@ -839,6 +984,10 @@ if [[ ! -f "docs/spec.md" ]]; then
 fi
 
 if [[ -z "$slug" ]]; then
+  if [[ "$new_plan" -eq 1 ]]; then
+    echo "--new-plan requires --slug" >&2
+    exit 1
+  fi
   echo "Workflow ready. No active plan present."
   echo "Create one with: bash scripts/ensure-task-workflow.sh --slug <slug> --title <title>"
   exit 0

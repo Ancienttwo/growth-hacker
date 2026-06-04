@@ -31,7 +31,7 @@ if [[ -f "$REQUIRE_MARKER" ]]; then
     "Primary working tree detected at $GIT_DIR while $REQUIRE_MARKER is present." \
     "Create and switch to a linked worktree before retrying the write operation." \
     "state_violation"
-  exit 1
+  exit 2
 fi
 
 echo "[WorktreeGuard] Warning: primary working tree detected ($GIT_DIR)."

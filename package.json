@@ -22,7 +22,8 @@
     "check:context-files": "bash scripts/check-context-files.sh",
     "check:deploy-sql": "bash scripts/check-deploy-sql-order.sh",
     "check:task-sync": "bash scripts/check-task-sync.sh",
-    "check:task-workflow": "bash scripts/check-task-workflow.sh --strict"
+    "check:task-workflow": "bash scripts/check-task-workflow.sh --strict",
+    "sync:brain-docs": "bash scripts/sync-brain-docs.sh --all"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",

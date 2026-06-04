@@ -3,12 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: scripts/verify-contract.sh --contract <contract-file> [--strict] [--quiet] [--report-file <path>]
+Usage: scripts/verify-contract.sh --contract <contract-file> [--strict] [--quiet] [--read-only] [--report-file <path>]
 
 Options:
   --contract <path>     Contract markdown file with a YAML exit_criteria block
   --strict              Exit with code 1 when any criteria fail
   --quiet               Suppress per-check logs; only print on failure or status change
+  --read-only           Do not rewrite the contract Status header (for hook-driven checks)
   --report-file <path>  Write structured JSON results for downstream tooling
 USAGE_EOF
 }
@@ -221,6 +222,7 @@ write_report() {
 contract_file=""
 strict=0
 quiet=0
+read_only=0
 report_file=""
 run_id="$(resolve_run_id)"
 failure_class=""
@@ -238,6 +240,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --quiet)
       quiet=1
+      shift
+      ;;
+    --read-only)
+      read_only=1
       shift
       ;;
     --report-file)
@@ -299,7 +305,9 @@ yaml_block="$(
 
 if [[ -z "$yaml_block" ]]; then
   next_status="Pending"
-  update_contract_status "$contract_file" "$next_status"
+  if [[ "$read_only" -eq 0 ]]; then
+    update_contract_status "$contract_file" "$next_status"
+  fi
   total=0
   failed=0
   failure_class="missing_artifact"
@@ -594,7 +602,9 @@ elif [[ "$failed" -gt 0 ]]; then
   failure_class="contract_failure"
 fi
 
-update_contract_status "$contract_file" "$next_status"
+if [[ "$read_only" -eq 0 ]]; then
+  update_contract_status "$contract_file" "$next_status"
+fi
 write_report "$report_file"
 
 if [[ "$quiet" -eq 1 ]]; then

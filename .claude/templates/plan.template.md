@@ -5,9 +5,9 @@
 > **Slug**: {{SLUG}}
 > **Spec**: `docs/spec.md`
 > **Research**: See `tasks/research.md`
-> **Sprint Contract**: `tasks/contracts/{{SLUG}}.contract.md`
-> **Sprint Review**: `tasks/reviews/{{SLUG}}.review.md`
-> **Implementation Notes**: `tasks/notes/{{SLUG}}.notes.md`
+> **Sprint Contract**: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+> **Sprint Review**: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+> **Implementation Notes**: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
 
 ## Agentic Routing
 - Selected route:
@@ -16,6 +16,20 @@
   - P1 map:
   - P2 trace:
   - P3 decision rationale:
+
+## Workflow Inventory
+Complete this inventory before implementation. If any line is unknown, keep the plan in Draft and fill it before projection.
+
+- Active plan: `{{PLAN_FILE}}`
+- Sprint contract: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+- Sprint review: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+- Implementation notes: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
+- Deferred-goal ledger: `tasks/todo.md`
+- Current checks: `.ai/harness/checks/latest.json`
+- Run snapshots: `.ai/harness/runs/`
+- Scope authority: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md` `allowed_paths`
+- Concurrency rule: `.ai/harness/active-plan` selects the active plan for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. If another worktree already owns active work, open or switch to the matching worktree instead of serializing unrelated plans.
+- Execution isolation: approved contract-level work projects through `scripts/plan-to-todo.sh --plan {{PLAN_FILE}}` and may start `scripts/contract-worktree.sh start --plan {{PLAN_FILE}}`.
 
 ## Approach
 ### Strategy
@@ -36,12 +50,12 @@
 |------|------------|--------|------------|
 
 ## Task Contracts
-- Contract file: `tasks/contracts/{{SLUG}}.contract.md`
-- Review file: `tasks/reviews/{{SLUG}}.review.md`
-- Implementation notes file: `tasks/notes/{{SLUG}}.notes.md`
+- Contract file: `tasks/contracts/{{ARTIFACT_STEM}}.contract.md`
+- Review file: `tasks/reviews/{{ARTIFACT_STEM}}.review.md`
+- Implementation notes file: `tasks/notes/{{ARTIFACT_STEM}}.notes.md`
 - Template: `.claude/templates/contract.template.md`
-- Verification command: `bash scripts/verify-contract.sh --contract tasks/contracts/{{SLUG}}.contract.md --strict`
-- Active plan rule: the latest non-archived `plans/plan-*.md` file is the current plan
+- Verification command: `bash scripts/verify-contract.sh --contract tasks/contracts/{{ARTIFACT_STEM}}.contract.md --strict`
+- Active plan rule: `.ai/harness/active-plan` is authoritative for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. Do not infer active execution from the latest non-archived plan.
 
 ## Handoff
 

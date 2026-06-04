@@ -79,7 +79,7 @@ validate_block() {
       return 1
       ;;
   esac
-  [[ -d "$block" ]]
+  [[ -e "$block" ]]
 }
 
 while [[ $# -gt 0 ]]; do

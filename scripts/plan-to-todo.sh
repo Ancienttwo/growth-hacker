@@ -85,6 +85,72 @@ get_todo_source_plan() {
   awk -F': ' '/^\> \*\*Source Plan\*\*:/ {print $2; exit}' tasks/todo.md 2>/dev/null | xargs
 }
 
+plan_slug_from_path() {
+  local plan_file="$1"
+  local base slug
+  base="$(basename "$plan_file")"
+  slug="$(printf '%s' "$base" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
+  printf '%s' "$slug"
+}
+
+plan_original_artifact_stem_from_path() {
+  local plan_file="$1"
+  local base stem
+  base="$(basename "$plan_file")"
+  stem="$(printf '%s' "$base" | sed -E 's/^plan-//; s/\.md$//')"
+  if [[ "$stem" =~ ^[0-9]{8}-[0-9]{4}-.+ ]]; then
+    printf '%s' "$stem"
+  else
+    plan_slug_from_path "$plan_file"
+  fi
+}
+
+is_transient_plan_slug() {
+  case "$1" in
+    think-plan-[0-9]*|codex-plan-[0-9]*|approved-plan-[0-9]*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+plan_title_slug_from_file() {
+  local plan_file="$1"
+  local title slug
+  [[ -f "$plan_file" ]] || return 1
+  title="$(awk '
+    /^# Plan:[[:space:]]*/ {
+      sub(/^# Plan:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$plan_file" | xargs)"
+  [[ -n "$title" ]] || return 1
+  slug="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+  [[ -n "$slug" ]] || return 1
+  printf '%s' "$slug"
+}
+
+plan_artifact_stem_from_path() {
+  local plan_file="$1"
+  local stem stamp slug title_slug
+  stem="$(plan_original_artifact_stem_from_path "$plan_file")"
+  if [[ "$stem" =~ ^[0-9]{8}-[0-9]{4}-.+ ]]; then
+    stamp="$(printf '%s' "$stem" | sed -E 's/^([0-9]{8}-[0-9]{4})-.+$/\1/')"
+    slug="$(printf '%s' "$stem" | sed -E 's/^[0-9]{8}-[0-9]{4}-//')"
+    if is_transient_plan_slug "$slug"; then
+      title_slug="$(plan_title_slug_from_file "$plan_file" || true)"
+      if [[ -n "$title_slug" && "$title_slug" != "$slug" ]]; then
+        printf '%s-%s' "$stamp" "$title_slug"
+        return 0
+      fi
+    fi
+    printf '%s' "$stem"
+  else
+    plan_slug_from_path "$plan_file"
+  fi
+}
+
 policy_get() {
   local jq_path="$1"
   local default_value="${2:-}"
@@ -126,8 +192,8 @@ plan_requests_contract_worktree() {
 maybe_start_contract_worktree() {
   local file="$1"
 
-  [[ "${PROJECT_INITIALIZER_CONTRACT_WORKTREE:-}" != "1" ]] || return 0
-  [[ "${PROJECT_INITIALIZER_DISABLE_CONTRACT_WORKTREE:-}" != "1" ]] || return 0
+  [[ "${REPO_HARNESS_CONTRACT_WORKTREE:-${PROJECT_INITIALIZER_CONTRACT_WORKTREE:-}}" != "1" ]] || return 0
+  [[ "${REPO_HARNESS_DISABLE_CONTRACT_WORKTREE:-${PROJECT_INITIALIZER_DISABLE_CONTRACT_WORKTREE:-}}" != "1" ]] || return 0
   [[ -x "scripts/contract-worktree.sh" ]] || return 0
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   ! is_linked_worktree || return 0
@@ -173,12 +239,31 @@ unique_archive_path() {
   printf '%s' "$candidate"
 }
 
+rewrite_plan_artifact_references() {
+  local plan_file="$1"
+  local from_stem="$2"
+  local to_stem="$3"
+  local tmp_file
+
+  [[ -n "$from_stem" && -n "$to_stem" && "$from_stem" != "$to_stem" ]] || return 0
+
+  tmp_file="$(mktemp)"
+  sed \
+    -e "s|tasks/contracts/${from_stem}\\.contract\\.md|tasks/contracts/${to_stem}.contract.md|g" \
+    -e "s|tasks/reviews/${from_stem}\\.review\\.md|tasks/reviews/${to_stem}.review.md|g" \
+    -e "s|tasks/notes/${from_stem}\\.notes\\.md|tasks/notes/${to_stem}.notes.md|g" \
+    "$plan_file" > "$tmp_file"
+  mv "$tmp_file" "$plan_file"
+}
+
 render_contract_file() {
   local plan_file="$1"
   local contract_file="$2"
-  local slug="$3"
-  local timestamp="$4"
-  local capability_id="$5"
+  local review_file="$3"
+  local notes_file="$4"
+  local slug="$5"
+  local timestamp="$6"
+  local capability_id="$7"
   local owner="${USER:-AI Agent}"
   local template_file=".claude/templates/contract.template.md"
   local tmp_file
@@ -193,8 +278,8 @@ render_contract_file() {
 > **Owner**: {{OWNER}}
 > **Capability ID**: {{CAPABILITY_ID}}
 > **Last Updated**: {{TIMESTAMP}}
-> **Review File**: `tasks/reviews/{{TASK_SLUG}}.review.md`
-> **Notes File**: `tasks/notes/{{TASK_SLUG}}.notes.md`
+> **Review File**: `{{REVIEW_FILE}}`
+> **Notes File**: `{{NOTES_FILE}}`
 
 ## Goal
 
@@ -205,15 +290,26 @@ Describe the exact outcome this task must deliver.
 - In scope:
 - Out of scope:
 
+## Workflow Inventory
+
+- Source plan: `{{PLAN_FILE}}`
+- Deferred-goal ledger: `tasks/todo.md`
+- Review file: `{{REVIEW_FILE}}`
+- Notes file: `{{NOTES_FILE}}`
+- Checks file: `.ai/harness/checks/latest.json`
+- Run snapshots: `.ai/harness/runs/`
+- Scope gate: edit only paths listed under `allowed_paths`; update this contract before widening scope.
+- Completion gate: `scripts/verify-sprint.sh` must see this contract pass, the review recommend pass, and `## External Acceptance Advice` pass or record a manual override.
+
 ## Allowed Paths
 
 ```yaml
 allowed_paths:
   - plans/
   - tasks/todo.md
-  - tasks/contracts/{{TASK_SLUG}}.contract.md
-  - tasks/reviews/{{TASK_SLUG}}.review.md
-  - tasks/notes/{{TASK_SLUG}}.notes.md
+  - {{CONTRACT_FILE}}
+  - {{REVIEW_FILE}}
+  - {{NOTES_FILE}}
   - .ai/context/capabilities.json
   - src/
   - tests/
@@ -225,7 +321,7 @@ allowed_paths:
 exit_criteria:
   files_exist:
     - src/modules/{{TASK_SLUG}}/index.ts
-    - tasks/notes/{{TASK_SLUG}}.notes.md
+    - {{NOTES_FILE}}
   tests_pass:
     - path: tests/unit/{{TASK_SLUG}}.test.ts
   commands_succeed:
@@ -252,10 +348,18 @@ CONTRACT_TEMPLATE_EOF
   sed \
     -e "s/{{TASK_SLUG}}/${slug}/g" \
     -e "s|{{PLAN_FILE}}|${plan_file}|g" \
+    -e "s|{{CONTRACT_FILE}}|${contract_file}|g" \
+    -e "s|{{REVIEW_FILE}}|${review_file}|g" \
+    -e "s|{{NOTES_FILE}}|${notes_file}|g" \
     -e "s|{{CAPABILITY_ID}}|${capability_id}|g" \
     -e "s/{{OWNER}}/${owner}/g" \
     -e "s/{{TIMESTAMP}}/${timestamp}/g" \
-    "$template_file" > "$tmp_file"
+    "$template_file" \
+    | sed \
+      -e "s|tasks/contracts/${slug}\\.contract\\.md|${contract_file}|g" \
+      -e "s|tasks/reviews/${slug}\\.review\\.md|${review_file}|g" \
+      -e "s|tasks/notes/${slug}\\.notes\\.md|${notes_file}|g" \
+      > "$tmp_file"
   mv "$tmp_file" "$contract_file"
 }
 
@@ -452,26 +556,33 @@ mkdir -p .ai/context
 mkdir -p .ai/harness/checks
 mkdir -p .ai/harness/handoff
 mkdir -p .ai/harness/failures
+mkdir -p .ai/harness/planning
 mkdir -p .ai/harness/runs
 
 timestamp="$(date +%Y%m%d-%H%M)"
 timestamp_human="$(date '+%Y-%m-%d %H:%M')"
 plan_base="$(basename "$plan_file")"
-slug="$(echo "$plan_base" | sed -E 's/^plan-[0-9]{8}-[0-9]{4}-//; s/\.md$//')"
-contract_file="tasks/contracts/${slug}.contract.md"
-review_file="tasks/reviews/${slug}.review.md"
-notes_file="tasks/notes/${slug}.notes.md"
+slug="$(plan_slug_from_path "$plan_file")"
+original_artifact_stem="$(plan_original_artifact_stem_from_path "$plan_file")"
+artifact_stem="$(plan_artifact_stem_from_path "$plan_file")"
+contract_file="tasks/contracts/${artifact_stem}.contract.md"
+review_file="tasks/reviews/${artifact_stem}.review.md"
+notes_file="tasks/notes/${artifact_stem}.notes.md"
 previous_source_plan="$(get_todo_source_plan || true)"
 parent_run_id="${HOOK_RUN_ID:-${CLAUDE_RUN_ID:-${CODEX_RUN_ID:-run-${timestamp}}}}"
 capability_id="$(extract_capability_id "$plan_file")"
 capability_id="${capability_id:-root}"
 
-if [[ -f "tasks/todo.md" ]] && grep -q '[^[:space:]]' tasks/todo.md; then
+rewrite_plan_artifact_references "$plan_file" "$original_artifact_stem" "$artifact_stem"
+
+if [[ -f "tasks/todo.md" ]] \
+  && grep -q '[^[:space:]]' tasks/todo.md \
+  && ! grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todo.md; then
   archive_file="$(unique_archive_path "tasks/archive/todo-${timestamp}-${slug}.md")"
   {
     echo "> **Archived**: $(date '+%Y-%m-%d %H:%M')"
     echo "> **Related Plan**: ${plan_file}"
-    echo "> **Outcome**: Superseded"
+    echo "> **Outcome**: Converted to deferred-goal ledger"
     echo "> **Source Plan**: ${previous_source_plan:-"(none)"}"
     echo "> **Parent Run ID**: ${parent_run_id}"
     echo
@@ -479,39 +590,40 @@ if [[ -f "tasks/todo.md" ]] && grep -q '[^[:space:]]' tasks/todo.md; then
   } > "$archive_file"
 fi
 
-tasks_tmp="$(mktemp)"
-awk '
-  BEGIN { in_section = 0 }
-  /^## Task Breakdown/ { in_section = 1; next }
-  in_section && /^## / { exit }
-  in_section { print }
-' "$plan_file" > "$tasks_tmp"
-
-if ! grep -Eq '^- \[[ xX]\]' "$tasks_tmp"; then
-  cat > "$tasks_tmp" <<'DEFAULT_TASKS_EOF'
-- [ ] Confirm task breakdown details
-- [ ] Implement approved plan incrementally
-DEFAULT_TASKS_EOF
+if [[ ! -f "tasks/todo.md" ]] || ! grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todo.md; then
+  {
+    echo "# Deferred Goal Ledger"
+    echo
+    echo "> **Status**: Backlog"
+    echo "> **Updated**: ${timestamp_human}"
+    echo "> **Scope**: Medium/long-term goals deferred from active plan execution"
+    echo
+    echo "Current plan tasks live in \`${plan_file}\` under \`## Task Breakdown\`."
+    echo "Do not duplicate that execution checklist here. Record only work intentionally deferred beyond this slice, with the tradeoff and revisit trigger."
+    echo
+    echo "## Deferred Goals"
+    echo
+    echo "| Goal | Why Deferred | Tradeoff | Revisit Trigger |"
+    echo "|------|--------------|----------|-----------------|"
+    echo "| (none) | No deferred medium/long-term goal recorded for this projection. | Keep this sprint bounded. | Add a row when a real follow-up is postponed. |"
+  } > tasks/todo.md
+else
+  todo_tmp="$(mktemp)"
+  awk -v timestamp_human="$timestamp_human" -v plan_file="$plan_file" '
+    /^\> \*\*Updated\*\*:/ {
+      print "> **Updated**: " timestamp_human
+      next
+    }
+    /^Current plan tasks live in `/ {
+      print "Current plan tasks live in `" plan_file "` under `## Task Breakdown`."
+      next
+    }
+    { print }
+  ' tasks/todo.md > "$todo_tmp"
+  mv "$todo_tmp" tasks/todo.md
 fi
 
-{
-  echo "# Task Execution Checklist (Primary)"
-  echo
-  echo "> **Source Plan**: ${plan_file}"
-  echo "> **Status**: Executing"
-  echo "> **Generated**: ${timestamp_human}"
-  echo "> **Source Plan Slug**: ${slug}"
-  echo "> **Review File**: ${review_file}"
-  echo "> **Notes File**: ${notes_file}"
-  echo "> **Capability ID**: ${capability_id}"
-  echo "> **Parent Run ID**: ${parent_run_id}"
-  echo "> **Supersedes**: ${previous_source_plan:-"(none)"}"
-  echo
-  echo "## Execution"
-  cat "$tasks_tmp"
-} > tasks/todo.md
-
-workflow_sync_task_state_from_todo "tasks/todo.md" ".claude/.task-state.json" "$plan_file"
+rm -f .claude/.task-state.json
 
 if [[ -f ".claude/templates/review.template.md" ]]; then
   :
@@ -536,11 +648,24 @@ else
 
 ## Verification Evidence
 
+- Waza /check run:
 - Commands run:
 - Manual checks:
 - Supporting artifacts:
 - Implementation notes reviewed:
 - Run snapshot:
+
+## External Acceptance Advice
+
+> **External Acceptance**: unavailable
+> **External Reviewer**:
+> **External Source**:
+> **External Started**:
+> **External Completed**:
+
+- P1 blockers:
+- P2 advisories:
+- Acceptance checklist:
 
 ## Behavior Diff Notes
 
@@ -574,7 +699,7 @@ else
 REVIEW_TEMPLATE_EOF
 fi
 
-render_contract_file "$plan_file" "$contract_file" "$slug" "$timestamp_human" "$capability_id"
+render_contract_file "$plan_file" "$contract_file" "$review_file" "$notes_file" "$slug" "$timestamp_human" "$capability_id"
 render_implementation_notes_file "$plan_file" "$contract_file" "$review_file" "$notes_file" "$slug" "$timestamp_human"
 sed \
   -e "s/{{TASK_SLUG}}/${slug}/g" \
@@ -589,7 +714,21 @@ if [[ ! -f ".ai/harness/checks/latest.json" ]]; then
   echo "{}" > .ai/harness/checks/latest.json
 fi
 
-rm -f "$tasks_tmp"
 set_plan_status "$plan_file" "Executing"
+if declare -F set_active_plan >/dev/null 2>&1; then
+  set_active_plan "$plan_file"
+else
+  mkdir -p .ai/harness .claude
+  printf '%s' "$plan_file" > .ai/harness/active-plan
+  printf '%s' "$plan_file" > .claude/.active-plan
+  pwd -P > .ai/harness/active-worktree
+fi
 
-echo "Updated tasks/todo.md from $plan_file"
+if declare -F workflow_clear_pending_orchestration >/dev/null 2>&1; then
+  workflow_clear_pending_orchestration
+else
+  rm -f .ai/harness/planning/pending.json
+fi
+
+echo "Prepared sprint artifacts from $plan_file"
+echo "Left tasks/todo.md as deferred-goal ledger; execute the plan's own ## Task Breakdown."

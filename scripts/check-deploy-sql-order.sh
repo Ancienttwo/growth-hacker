@@ -9,6 +9,7 @@ Validates deployment SQL assets:
 - deployment SQL files must live directly under deploy/sql/
 - filenames must start with a 4-digit numeric prefix
 - prefixes must be strictly ascending in filename order
+- if tests/sql/control_plane_invariants.sql exists, it must reference every deployment SQL file
 
 Example: deploy/sql/0001_create_tables.sql
 USAGE_EOF
@@ -16,6 +17,7 @@ USAGE_EOF
 
 quiet=0
 sql_root="deploy/sql"
+invariant_file="tests/sql/control_plane_invariants.sql"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -94,6 +96,16 @@ else
     previous_number="$number_value"
     previous_file="$file"
   done < <(find "$sql_root" -maxdepth 1 -type f -name '*.sql' | sort)
+
+  if [[ -f "$invariant_file" ]]; then
+    while IFS= read -r file; do
+      [[ -z "$file" ]] && continue
+      base="$(basename "$file")"
+      if ! grep -Fq "$file" "$invariant_file" && ! grep -Fq "$base" "$invariant_file"; then
+        report_issue "SQL migration must be referenced by $invariant_file: $file"
+      fi
+    done < <(find "$sql_root" -maxdepth 1 -type f -name '*.sql' | sort)
+  fi
 fi
 
 if (( issues > 0 )); then

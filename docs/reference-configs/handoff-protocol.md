@@ -27,10 +27,11 @@ Handoffs make long-running work resumable without trusting chat history.
 1. Start a fresh Codex session instead of relying on auto-compact or `codex resume` when the old session is near the limit.
 2. Read `.ai/harness/handoff/resume.md`.
 3. Read `.ai/harness/handoff/current.md`.
-4. Read the active plan and sprint contract.
-5. Read the latest review file if one exists.
-6. Read `.ai/harness/checks/latest.json` and `.ai/harness/context-budget/latest.json`.
-7. Resume from the exact next step.
+4. Read `tasks/current.md` as an orientation snapshot only; in a non-target worktree, compare it with `git show <target>:tasks/current.md`.
+5. Read the active plan and sprint contract.
+6. Read the latest review file if one exists.
+7. Read `.ai/harness/checks/latest.json` and `.ai/harness/context-budget/latest.json`.
+8. Resume from the exact next step.
 
 ## Context Budget Policy
 
@@ -39,3 +40,4 @@ Handoffs make long-running work resumable without trusting chat history.
 - Orange `70-80%`: stop broad exploration and generate the resume packet.
 - Red `>=80%`: stop after the current response and resume in a fresh session.
 - SQLite and Codex thread state are read models only. Markdown, JSON, and JSONL files remain the canonical handoff surface.
+- `tasks/current.md` is a tracked derived snapshot. It helps branch/worktree orientation, but stale or surprising state must be checked against plans, workstreams, handoff, and checks.

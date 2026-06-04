@@ -65,7 +65,8 @@ export type WorkflowContract = {
   documents: {
     spec: string;
     planDirectory: string;
-    taskChecklist: string;
+    taskChecklist?: string;
+    deferredGoalLedger?: string;
     researchNotes: string;
     lessonsLog: string;
   };
@@ -104,8 +105,7 @@ const LOCAL_ASSET_PATH = join(REPO_ROOT, "assets", "workflow-contract.v1.json");
 export function resolveAgenticDevRoot(_repoRoot = REPO_ROOT): string {
   const configuredRoot =
     process.env.AGENTIC_DEV_ROOT ||
-    process.env.AGENTIC_DEV_SKILL_ROOT ||
-    process.env.PROJECT_INITIALIZER_ROOT;
+    process.env.AGENTIC_DEV_SKILL_ROOT;
   if (configuredRoot && configuredRoot.length > 0) return configuredRoot;
 
   if (existsSync(LOCAL_ASSET_PATH)) return REPO_ROOT;
@@ -113,16 +113,13 @@ export function resolveAgenticDevRoot(_repoRoot = REPO_ROOT): string {
   const home = process.env.HOME;
   if (home && home.length > 0) {
     const candidates = [
-      join(home, "Projects", "agentic-dev"),
-      join(home, ".codex", "skills", "agentic-dev"),
-      join(home, ".codex", "skills", "agentic-dev-skill"),
-      join(home, ".codex", "skills", "project-initializer"),
-      join(home, ".claude", "skills", "agentic-dev"),
-      join(home, ".claude", "skills", "agentic-dev-skill"),
-      join(home, ".claude", "skills", "project-initializer"),
-      join(home, ".agents", "skills", "agentic-dev"),
-      join(home, ".agents", "skills", "agentic-dev-skill"),
-      join(home, ".agents", "skills", "project-initializer"),
+      join(home, "Projects", "repo-harness"),
+      join(home, ".codex", "skills", "repo-harness"),
+      join(home, ".codex", "skills", "repo-harness-skill"),
+      join(home, ".claude", "skills", "repo-harness"),
+      join(home, ".claude", "skills", "repo-harness-skill"),
+      join(home, ".agents", "skills", "repo-harness"),
+      join(home, ".agents", "skills", "repo-harness-skill"),
     ];
 
     for (const candidate of candidates) {
@@ -132,7 +129,7 @@ export function resolveAgenticDevRoot(_repoRoot = REPO_ROOT): string {
     return candidates[0];
   }
 
-  return "/Users/ancienttwo/.agents/skills/agentic-dev";
+  return "/Users/ancienttwo/.agents/skills/repo-harness";
 }
 
 export function resolveAgenticDevSkillRoot(repoRoot = REPO_ROOT): string {

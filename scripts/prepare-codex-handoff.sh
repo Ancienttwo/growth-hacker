@@ -62,23 +62,106 @@ budget_file=".ai/harness/context-budget/latest.json"
 
 mkdir -p "$global_dir"
 
-python3 - "$global_file" "$repo" "$reason" "$repo_handoff" "$resume_file" "$budget_file" <<'PY_EOF'
+repo_key="$(printf '%s' "$repo" | shasum | awk '{print substr($1, 1, 12)}')"
+
+if command -v node >/dev/null 2>&1; then
+  node - "$global_file" "$repo" "$repo_key" "$reason" "$repo_handoff" "$resume_file" "$budget_file" <<'JS_EOF'
+const fs = require("fs");
+const path = require("path");
+
+const [, , globalFile, repo, repoKey, reason, repoHandoff, resumeFile, budgetFile] = process.argv;
+
+fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+const start = `<!-- repo:${repoKey} start -->`;
+const end = `<!-- repo:${repoKey} end -->`;
+
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+
+function yymmdd(date) {
+  return `${String(date.getFullYear()).slice(-2)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+}
+
+function timestamp(date) {
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join("-") + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function readText(filePath, limit = 12000) {
+  try {
+    const text = fs.readFileSync(filePath, "utf8");
+    return text.length <= limit ? text : `${text.slice(0, limit - 1)}...`;
+  } catch {
+    return "(missing)";
+  }
+}
+
+const now = new Date();
+const header = `# Codex Handoff ${yymmdd(now)}\n\nFilesystem-first fallback handoffs for compact-independent Codex sessions.\n\n`;
+const section = [
+  start,
+  `## ${timestamp(now)} ${path.basename(repo)}`,
+  "",
+  `- cwd: \`${repo}\``,
+  `- reason: \`${reason}\``,
+  `- repo_handoff: \`${repoHandoff}\``,
+  `- resume_packet: \`${resumeFile}\``,
+  `- context_budget: \`${budgetFile}\``,
+  "",
+  "### Context Budget",
+  "",
+  "```json",
+  readText(budgetFile, 4000).trim(),
+  "```",
+  "",
+  "### Repo Handoff",
+  "",
+  readText(path.join(repo, repoHandoff), 8000).trim(),
+  "",
+  "### Resume Packet",
+  "",
+  readText(path.join(repo, resumeFile), 8000).trim(),
+  "",
+  end,
+  "",
+].join("\n");
+
+let content = fs.existsSync(globalFile) ? fs.readFileSync(globalFile, "utf8") : header;
+if (content.includes(start) && content.includes(end)) {
+  const [prefix, rest] = content.split(start, 2);
+  const suffix = rest.split(end, 2)[1] ?? "";
+  content = prefix + section + suffix.replace(/^\n+/, "");
+} else {
+  if (!content.endsWith("\n")) {
+    content += "\n";
+  }
+  content += section;
+}
+
+fs.writeFileSync(globalFile, content, "utf8");
+console.log(globalFile);
+JS_EOF
+else
+  python3 - "$global_file" "$repo" "$repo_key" "$reason" "$repo_handoff" "$resume_file" "$budget_file" <<'PY_EOF'
 from __future__ import annotations
 
-import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
 
 global_file = Path(sys.argv[1])
 repo = Path(sys.argv[2])
-reason = sys.argv[3]
-repo_handoff = Path(sys.argv[4])
-resume_file = Path(sys.argv[5])
-budget_file = Path(sys.argv[6])
+repo_key = sys.argv[3]
+reason = sys.argv[4]
+repo_handoff = Path(sys.argv[5])
+resume_file = Path(sys.argv[6])
+budget_file = Path(sys.argv[7])
 
 global_file.parent.mkdir(parents=True, exist_ok=True)
-repo_key = hashlib.sha1(str(repo).encode("utf-8")).hexdigest()[:12]
 start = f"<!-- repo:{repo_key} start -->"
 end = f"<!-- repo:{repo_key} end -->"
 
@@ -133,6 +216,7 @@ else:
 global_file.write_text(content, encoding="utf-8")
 print(global_file)
 PY_EOF
+fi
 
 if [[ -n "$resume_output" ]]; then
   printf '%s\n' "$resume_output"

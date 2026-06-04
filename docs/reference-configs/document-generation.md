@@ -18,7 +18,8 @@ Create these only when the agent has concrete repo evidence or the user asks:
 - `docs/tech-stack.md`: confirmed runtime, framework, and dependency choices.
 - `docs/decisions.md`: accepted architecture decisions with trade-offs.
 - `docs/architecture/snapshots/*.md`: current module boundaries and data flow for architecture-sensitive changes.
-- `docs/architecture/diagrams/*.html`: self-contained architecture diagrams produced by agents when a visual is clearer than prose.
+- Mermaid fenced blocks in `docs/architecture/modules/**.md` or `docs/architecture/snapshots/*.md`: semantic diagram source for agents and review diffs.
+- `docs/architecture/diagrams/*.html`: optional human-readable `mermaid` renderings produced when a visual is clearer than prose.
 - `docs/packages.md`: package inventory for real multi-package repos.
 
 ## Rules
@@ -29,6 +30,7 @@ Create these only when the agent has concrete repo evidence or the user asks:
 - Prefer short docs that name sources, owners, and verification commands.
 - Let capability `CLAUDE.md` and `AGENTS.md` carry local contract projections; root docs stay concise.
 - Keep complete workstream TODOs in `tasks/workstreams/<domain>/<capability>/`; contract blocks should link to them instead of becoming task logs.
-- Hooks may create `docs/architecture/requests/*.md`; agents own semantic snapshots and `diagram-design` HTML output.
+- Hooks may create `docs/architecture/requests/*.md`; agents own semantic snapshots, embedded Mermaid, and optional `mermaid` HTML output.
 - Archive handled architecture requests with `scripts/archive-architecture-request.sh`; keep `docs/architecture/requests/` pending-only and preserve handled requests under `docs/architecture/requests/archive/YYYY/`.
-- Treat `diagram-design` as an external installed skill dependency at `~/.codex/skills/diagram-design`; do not copy or inline its assets into generated repos.
+- When both Mermaid and HTML exist, keep the Mermaid in Markdown as the semantic source and make the HTML link back to that Markdown source.
+- Treat `mermaid` as an external installed skill dependency at `~/.codex/skills/mermaid`; do not copy or inline its assets into generated repos.

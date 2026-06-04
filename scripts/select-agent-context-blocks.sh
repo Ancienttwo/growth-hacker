@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="${1:-.}"
 repo="$(cd "$repo" && pwd)"
-config_file="${PROJECT_INITIALIZER_CONTEXT_BLOCKS_FILE:-$repo/.ai/context/agent-context-blocks.txt}"
+config_file="${REPO_HARNESS_CONTEXT_BLOCKS_FILE:-${PROJECT_INITIALIZER_CONTEXT_BLOCKS_FILE:-$repo/.ai/context/agent-context-blocks.txt}}"
 registry_file="$repo/.ai/context/capabilities.json"
 
 emit_lines() {
@@ -45,8 +45,9 @@ JS_EOF
   fi
 fi
 
-if [[ -n "${PROJECT_INITIALIZER_CONTEXT_BLOCKS:-}" ]]; then
-  printf '%s\n' "$PROJECT_INITIALIZER_CONTEXT_BLOCKS" | tr ',:' '\n' | emit_lines | emit_existing_dirs
+context_blocks="${REPO_HARNESS_CONTEXT_BLOCKS:-${PROJECT_INITIALIZER_CONTEXT_BLOCKS:-}}"
+if [[ -n "$context_blocks" ]]; then
+  printf '%s\n' "$context_blocks" | tr ',:' '\n' | emit_lines | emit_existing_dirs
   exit 0
 fi
 
@@ -56,7 +57,7 @@ if [[ -f "$config_file" ]]; then
 fi
 
 find "$repo" \
-  \( -path "$repo/.git" -o -path "$repo/node_modules" -o -path "$repo/.ai" -o -path "$repo/.claude" \) -prune -o \
+  \( -path "$repo/.git" -o -path "$repo/node_modules" -o -path "$repo/.ai" -o -path "$repo/.claude" -o -path "$repo/_ref" -o -path "$repo/_ops" -o -path "$repo/.worktrees" \) -prune -o \
   \( -type f \( -name 'CLAUDE.md' -o -name 'AGENTS.md' \) \) -print 2>/dev/null | while IFS= read -r context_file; do
     context_dir="$(dirname "$context_file")"
     rel_dir="${context_dir#$repo/}"

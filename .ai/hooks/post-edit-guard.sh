@@ -41,7 +41,20 @@ run_architecture_drift_sync() {
     if [[ -x "scripts/context-contract-sync.sh" ]]; then
       bash "scripts/context-contract-sync.sh" sync-latest || true
     fi
+    if [[ -n "${REPO_HARNESS_CLI:-}" && -f "$REPO_HARNESS_CLI" ]] && command -v bun >/dev/null 2>&1; then
+      bun "$REPO_HARNESS_CLI" capability-context request --from-latest-architecture-event || true
+    elif command -v repo-harness >/dev/null 2>&1; then
+      repo-harness capability-context request --from-latest-architecture-event || true
+    elif command -v bun >/dev/null 2>&1 && [[ -f "src/cli/index.ts" ]]; then
+      bun src/cli/index.ts capability-context request --from-latest-architecture-event || true
+    fi
   fi
+}
+
+run_brain_doc_sync() {
+  [[ -x "scripts/sync-brain-docs.sh" ]] || return 0
+
+  bash "scripts/sync-brain-docs.sh" --changed "$FILE_PATH" || true
 }
 
 FILE_PATH="$(hook_get_file_path "${1:-}")"
@@ -98,9 +111,22 @@ fi
 
 run_architecture_drift_sync
 
+run_brain_doc_sync
+
 run_continuous_contract_verification
 
-if [[ "$FILE_PATH" != "tasks/todo.md" ]] || [[ ! -f "tasks/todo.md" ]]; then
+case "$FILE_PATH" in
+  tasks/todo.md|plans/*.md|tasks/reviews/*.review.md|.ai/harness/checks/latest.json)
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+active_plan="$(get_active_plan || true)"
+if [[ "$FILE_PATH" == "tasks/todo.md" && -z "$active_plan" ]] && grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todo.md; then
+  rm -f "$(workflow_task_state_file)" ".claude/.task-handoff.md"
+  echo "[TaskHandoff] Deferred-goal ledger updated; active execution remains in the plan Task Breakdown."
   exit 0
 fi
 
@@ -109,40 +135,27 @@ mkdir -p .claude
 STATE_FILE="$(workflow_task_state_file)"
 HANDOFF_FILE=".claude/.task-handoff.md"
 
-prev_done="$(workflow_read_state_field "$STATE_FILE" "done_tasks" 2>/dev/null || echo 0)"
-prev_done="${prev_done:-0}"
+if [[ "$FILE_PATH" == "tasks/todo.md" ]] && [[ -f "tasks/todo.md" ]] && ! grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todo.md; then
+  workflow_sync_task_state_from_todo "tasks/todo.md" "$STATE_FILE"
+fi
 
-workflow_sync_task_state_from_todo "tasks/todo.md" "$STATE_FILE"
-
-done_tasks="$(workflow_read_state_field "$STATE_FILE" "done_tasks" 2>/dev/null || echo 0)"
-total_tasks="$(workflow_read_state_field "$STATE_FILE" "total_tasks" 2>/dev/null || echo 0)"
+task_state="$(workflow_plan_task_state "$active_plan")"
+IFS=$'\t' read -r total_tasks done_tasks next_pending <<< "$task_state"
 done_tasks="${done_tasks:-0}"
 total_tasks="${total_tasks:-0}"
+next_pending="${next_pending:-"(none)"}"
 
-if [[ "$done_tasks" -le "$prev_done" ]]; then
-  exit 0
-fi
-
-just_completed="$(
-  grep -E '^[[:space:]]*-[[:space:]]\[[xX]\][[:space:]]+' tasks/todo.md \
-    | sed -E 's/^[[:space:]]*-[[:space:]]\[[xX]\][[:space:]]+//' \
-    | tail -1
-)"
-just_completed="${just_completed:-Task completed}"
-
-remaining_tasks="$(
-  grep -E '^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+' tasks/todo.md \
-    | sed -E 's/^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+/- [ ] /'
-)"
-
-if [[ -z "$remaining_tasks" ]]; then
-  remaining_tasks="- [ ] (none)"
-fi
+next_action="$(workflow_next_action)"
+next_stage="$(printf '%s\n' "$next_action" | cut -f1)"
+next_command="$(printf '%s\n' "$next_action" | cut -f2)"
+next_message="$(printf '%s\n' "$next_action" | cut -f3-)"
+[[ "${next_command:-}" == "-" ]] && next_command=""
+next_stage="${next_stage:-none}"
+next_message="${next_message:-(none)}"
 
 diff_stat="$(git diff --shortstat HEAD 2>/dev/null | tr -d '\n')"
 diff_stat="${diff_stat:-no uncommitted diff against HEAD}"
 
-active_plan="$(get_active_plan || true)"
 if [[ -z "$active_plan" ]]; then
   active_plan="(none)"
 fi
@@ -152,13 +165,6 @@ if [[ "$active_plan" != "(none)" && -f "$active_plan" ]]; then
   plan_status="$(awk '/^\> \*\*Status\*\*:/ {sub(/^.*\> \*\*Status\*\*: */, ""); gsub(/\r/, ""); print; exit}' "$active_plan" | xargs)"
   plan_status="${plan_status:-(unknown)}"
 fi
-
-next_task="$(
-  grep -E '^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+' tasks/todo.md \
-    | head -1 \
-    | sed -E 's/^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+//'
-)"
-next_task="${next_task:-(none)}"
 
 changed_files="$(git diff --name-only HEAD 2>/dev/null | head -10)"
 changed_files="${changed_files:-(none)}"
@@ -174,17 +180,15 @@ cat > "$HANDOFF_FILE" <<EOF_HANDOFF
 
 - ${plan_status}
 
-## Just Completed
+## Current Task
 
-- ${just_completed}
-
-## Remaining Tasks
-
-${remaining_tasks}
+- ${next_pending}
 
 ## Next Actions
 
-- Next task: ${next_task}
+- Stage: ${next_stage}
+- Action: ${next_message}
+- Command: ${next_command:-(none)}
 
 ## Key Artifacts
 
@@ -197,7 +201,7 @@ ${changed_files}
 - ${diff_stat}
 EOF_HANDOFF
 
-echo "[TaskHandoff] Task completion advanced (${done_tasks}/${total_tasks}). Wrote ${HANDOFF_FILE}."
+echo "[TaskHandoff] Workflow next action is ${next_stage}. Wrote ${HANDOFF_FILE}."
 
 workflow_write_handoff "task-progress" || true
 if [[ -f "$(workflow_handoff_file)" ]]; then

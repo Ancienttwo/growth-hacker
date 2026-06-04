@@ -21,7 +21,7 @@ _ops/
 !.env.example
 # OS metadata
 
-# BEGIN: claude-runtime-temp (managed by project-initializer)
+# BEGIN: claude-runtime-temp (managed by repo-harness)
 .claude/settings.local.json
 .claude/.atomic_pending
 .claude/.session-id
@@ -31,22 +31,30 @@ _ops/
 .claude/.task-state.json
 .claude/.task-handoff.md
 .claude/.context-pressure/
+.claude/.codegraph-state/
 .claude/*.tmp
 .claude/*.bak
 .claude/*.bak.*
 .claude/*.backup-*
 .ai/harness/checks/latest.json
+.ai/harness/checks/post-bash-latest.json
 .ai/harness/events.jsonl
 .ai/harness/failures/latest.jsonl
 .ai/harness/handoff/current.md
 .ai/harness/handoff/resume.md
 .ai/harness/context-budget/latest.json
+.ai/harness/capability-context/
+.ai/harness/security/*
+!.ai/harness/security/.gitkeep
+.ai/harness/planning/*
+!.ai/harness/planning/.gitkeep
 .ai/harness/architecture/events.jsonl
+.ai/harness/active-plan
+.ai/harness/active-worktree
 .ai/harness/worktrees/
 .ai/harness/runs/
 .codex/*
-!.codex/
-!.codex/hooks.json
 .claude/.active-plan
 .claude/.plan-state/
 # END: claude-runtime-temp
+.codegraph/
