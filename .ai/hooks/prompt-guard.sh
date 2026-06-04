@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/session-state.sh"
 
 is_execution_approval_intent() {
-  echo "$PROMPT_TEXT" | grep -qEi "^[[:space:][:punct:]]*(please[[:space:][:punct:]]+)?(go ahead([[:space:]]+(with[[:space:]]+(it|this|that)|please))?|go|proceed([[:space:]]+(with[[:space:]]+(it|this|that)|please))?|approved|approve([[:space:]]+(it|this|that))?|ship it|let'?s go|继续执行|批准执行|批准|可以干(了|吧)?|可以(开始|执行)(了|吧)?|直接改(了|吧)?|整|整吧|开干|干吧|做吧|走起)([[:space:][:punct:]]+please)?[[:space:][:punct:]]*$"
+  echo "$PROMPT_TEXT" | grep -qEi "^[[:space:][:punct:]]*(please[[:space:][:punct:]]+)?(go ahead([[:space:]]+(with[[:space:]]+(it|this|that)|please))?|go|proceed([[:space:]]+(with[[:space:]]+(it|this|that)|please))?|approved|approve([[:space:]]+(it|this|that))?|ship it|let'?s go|继续执行|批准执行|批准|同意(了)?[[:space:][:punct:]，。！？!]*(执行|开干|开始|动手|做|干)(了|吧)?|可以干(了|吧)?|可以(开始|执行)(了|吧)?|直接改(了|吧)?|整|整吧|开干|干吧|做吧|走起)([[:space:][:punct:]]+please)?[[:space:][:punct:]]*$"
 }
 
 prompt_has_explicit_execution_command_line() {
@@ -876,6 +876,142 @@ prompt_guard_decision_command() {
   return 127
 }
 
+prompt_guard_env_truthy() {
+  case "${1:-}" in
+    1|true) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_guard_fallback_intent() {
+  if prompt_guard_env_truthy "${PROMPT_GUARD_DONE_INTENT:-}"; then
+    printf '%s' "done"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PLAN_START_INTENT:-}" && ! prompt_guard_env_truthy "${PROMPT_GUARD_IMPLEMENT_INTENT:-}"; then
+    printf '%s' "planning_start"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PLANNING_DISCUSSION_INTENT:-}"; then
+    printf '%s' "planning_discussion"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_REVIEW_RELEASE_INTENT:-}"; then
+    printf '%s' "review_release"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PASSIVE_WORKTREE_STATUS_INTENT:-}"; then
+    printf '%s' "passive_worktree_status"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PASSIVE_COMPLETION_REPORT_INTENT:-}"; then
+    printf '%s' "passive_completion_report"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PASSIVE_NEXT_SLICE_REPORT_INTENT:-}"; then
+    printf '%s' "passive_next_slice_report"
+  elif ! prompt_guard_env_truthy "${PROMPT_GUARD_IMPLEMENT_INTENT:-}"; then
+    printf '%s' "none"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_EMBEDDED_APPROVED_PLAN_INTENT:-}" || prompt_guard_env_truthy "${PROMPT_GUARD_PLAN_SHAPED_MARKDOWN_INTENT:-}"; then
+    printf '%s' "embedded_approved_plan"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_BUG_OR_HUNT_INTENT:-}"; then
+    printf '%s' "bug_fix_execution"
+  elif prompt_guard_env_truthy "${PROMPT_GUARD_PLAN_EXECUTION_PROJECTION_INTENT:-}"; then
+    printf '%s' "plan_execution_projection"
+  else
+    printf '%s' "general_execution"
+  fi
+}
+
+prompt_guard_fallback_is_execution_intent() {
+  case "$1" in
+    embedded_approved_plan|bug_fix_execution|plan_execution_projection|general_execution) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_guard_fallback_no_active_plan_action() {
+  local intent="$1"
+  if [[ "$intent" != "bug_fix_execution" && "${PROMPT_GUARD_PENDING_STATE:-none}" == "fresh" ]]; then
+    printf '%s' "plan_capture_pending_advice"
+  elif [[ "${PROMPT_GUARD_WORKTREE_STATE:-current}" == "linked_target" ]]; then
+    printf '%s' "worktree_execution_advice"
+  elif [[ "$intent" == "plan_execution_projection" ]]; then
+    printf '%s' "plan_capture_missing_active_advice"
+  else
+    printf '%s' "plan_status_no_active_block"
+  fi
+}
+
+prompt_guard_fallback_draft_plan_action() {
+  if [[ "$1" == "plan_execution_projection" ]]; then
+    printf '%s' "plan_capture_draft_advice"
+  else
+    printf '%s' "plan_status_not_approved_block"
+  fi
+}
+
+prompt_guard_fallback_approved_plan_action() {
+  local intent="$1"
+  if [[ "${PROMPT_GUARD_EVIDENCE_STATE:-unchecked}" == "incomplete" ]]; then
+    printf '%s' "evidence_contract_block"
+  elif [[ "${PROMPT_GUARD_PLAN_STATE:-none}" == "approved" && "$intent" == "plan_execution_projection" && "${PROMPT_GUARD_CONTRACT_STATE:-missing}" != "present" ]]; then
+    printf '%s' "plan_execution_scaffold_advice"
+  elif [[ "${PROMPT_GUARD_CONTRACT_STATE:-missing}" != "present" ]]; then
+    printf '%s' "contract_missing_block"
+  else
+    printf '%s' "allow"
+  fi
+}
+
+prompt_guard_fallback_done_action() {
+  case "${PROMPT_GUARD_PLAN_STATE:-none}" in
+    none|stale_marker|foreign_worktree)
+      printf '%s' "done_missing_active_plan"
+      return 0
+      ;;
+  esac
+
+  if [[ "${PROMPT_GUARD_CONTRACT_PATH_STATE:-missing}" != "present" ]]; then
+    printf '%s' "done_contract_path_missing"
+  elif [[ "${PROMPT_GUARD_CONTRACT_STATE:-missing}" != "present" ]]; then
+    printf '%s' "done_missing_contract"
+  elif [[ "${PROMPT_GUARD_EVIDENCE_STATE:-unchecked}" == "incomplete" ]]; then
+    printf '%s' "done_evidence_contract_block"
+  else
+    printf '%s' "done_gate"
+  fi
+}
+
+prompt_guard_decide_fallback() {
+  local intent
+  intent="$(prompt_guard_fallback_intent)"
+
+  if [[ "$intent" == "done" ]]; then
+    prompt_guard_fallback_done_action
+    return 0
+  fi
+
+  if ! prompt_guard_fallback_is_execution_intent "$intent"; then
+    printf '%s' "allow"
+    return 0
+  fi
+
+  if [[ "${PROMPT_GUARD_SPEC_STATE:-missing}" == "missing" ]]; then
+    printf '%s' "spec_block"
+    return 0
+  fi
+
+  case "${PROMPT_GUARD_PLAN_STATE:-none}" in
+    none)
+      prompt_guard_fallback_no_active_plan_action "$intent"
+      ;;
+    stale_marker|foreign_worktree)
+      printf '%s' "stale_active_plan_advice"
+      ;;
+    draft|annotating)
+      prompt_guard_fallback_draft_plan_action "$intent"
+      ;;
+    approved|executing)
+      prompt_guard_fallback_approved_plan_action "$intent"
+      ;;
+    unknown)
+      printf '%s' "allow"
+      ;;
+    *)
+      prompt_guard_fallback_no_active_plan_action "$intent"
+      ;;
+  esac
+}
+
 prompt_guard_refresh_state() {
   prompt_guard_spec_state="missing"
   prompt_guard_plan_state="none"
@@ -976,7 +1112,16 @@ prompt_guard_decide() {
   export PROMPT_GUARD_CONTRACT_PATH_STATE="$prompt_guard_contract_path_state"
   export PROMPT_GUARD_EVIDENCE_STATE="$prompt_guard_evidence_state"
 
-  if ! decision_output="$(prompt_guard_decision_command)"; then
+  if decision_output="$(prompt_guard_decision_command)"; then
+    :
+  else
+    decision_status=$?
+    if [[ "$decision_status" -eq 127 ]]; then
+      decision_output="$(prompt_guard_decide_fallback)"
+      printf '%s\n' "$decision_output" | head -n1 | xargs
+      return 0
+    fi
+
     echo "[PromptGuard] Decision engine unavailable or failed."
     hook_structured_error \
       "PromptGuard" \
