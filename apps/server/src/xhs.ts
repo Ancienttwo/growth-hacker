@@ -6,6 +6,7 @@ import type { XhsAuthStatus } from "@growth-hacker/core";
 
 import { commandExists, runCommand } from "./shell";
 import type { JobStore } from "./jobs";
+import { invalidateStatusCache, readThroughStatusCache } from "./statusCache";
 
 type XhsIdentityCommand = "status" | "whoami";
 
@@ -15,7 +16,20 @@ interface XhsEnvelope {
   error?: { code?: string; message?: string };
 }
 
+const STATUS_CACHE_TTL_MS = 5000;
+const STATUS_COMMAND_TIMEOUT_MS = 1500;
+const STATUS_COMMAND_KILL_GRACE_MS = 500;
+const xhsAuthStatusCache = new Map<string, { expiresAt: number; inFlight?: Promise<XhsAuthStatus>; value?: XhsAuthStatus }>();
+
 export async function getXhsAuthStatus(): Promise<XhsAuthStatus> {
+  return readThroughStatusCache(xhsAuthStatusCache, xhsAuthStatusCacheKey(), STATUS_CACHE_TTL_MS, readXhsAuthStatus);
+}
+
+export function invalidateXhsAuthStatusCache(): void {
+  invalidateStatusCache(xhsAuthStatusCache);
+}
+
+async function readXhsAuthStatus(): Promise<XhsAuthStatus> {
   const xhs = await commandExists("xhs");
   if (!xhs) {
     return {
@@ -26,10 +40,14 @@ export async function getXhsAuthStatus(): Promise<XhsAuthStatus> {
       message: "xhs CLI not found. Install with `uv tool install xiaohongshu-cli`."
     };
   }
-  return readXhsGlobalAuthStatus(xhs, "status");
+  return readXhsGlobalAuthStatus(xhs, "status", {
+    timeoutKillGraceMs: STATUS_COMMAND_KILL_GRACE_MS,
+    timeoutMs: statusCommandTimeoutMs()
+  });
 }
 
 export async function startXhsLogin(jobStore: JobStore, mode: "qrcode" | "browser" = "qrcode") {
+  invalidateXhsAuthStatusCache();
   const xhs = await commandExists("xhs");
   if (!xhs) {
     throw new Error("xhs CLI not found. Install with `uv tool install xiaohongshu-cli`.");
@@ -76,6 +94,7 @@ export async function startXhsLogin(jobStore: JobStore, mode: "qrcode" | "browse
       throw error;
     } finally {
       cleanupGlobalAuthBackup(backupPath);
+      invalidateXhsAuthStatusCache();
     }
   });
 }
@@ -100,8 +119,26 @@ async function waitForSignedInGlobalAuth(xhs: string, log: (line: string) => voi
   };
 }
 
-async function readXhsGlobalAuthStatus(xhs: string, command: XhsIdentityCommand): Promise<XhsAuthStatus> {
-  const result = await runCommand(xhs, [command, "--json"], { timeoutMs: 30000 });
+async function readXhsGlobalAuthStatus(
+  xhs: string,
+  command: XhsIdentityCommand,
+  options: { timeoutKillGraceMs?: number; timeoutMs?: number } = {}
+): Promise<XhsAuthStatus> {
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const result = await runCommand(xhs, [command, "--json"], {
+    timeoutKillGraceMs: options.timeoutKillGraceMs,
+    timeoutMs
+  });
+  if (result.timedOut) {
+    return {
+      installed: true,
+      authenticated: false,
+      scope: "global",
+      state: "invalid",
+      errorCode: "status_timeout",
+      message: `xhs ${command} --json timed out after ${timeoutMs}ms. Retry after the CLI is responsive.`
+    };
+  }
   const raw = result.stdout || result.stderr;
   const envelope = parseEnvelope(raw);
 
@@ -210,6 +247,14 @@ function delay(ms: number): Promise<void> {
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function statusCommandTimeoutMs(): number {
+  return positiveInteger(process.env.GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS, STATUS_COMMAND_TIMEOUT_MS);
+}
+
+function xhsAuthStatusCacheKey(): string {
+  return [process.env.PATH ?? "", globalAuthCookiePath()].join("|");
 }
 
 function backupGlobalAuthCookie(): string | undefined {

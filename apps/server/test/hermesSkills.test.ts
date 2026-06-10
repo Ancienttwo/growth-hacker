@@ -100,6 +100,24 @@ describe("Hermes profile skills", () => {
     expect(skills[0]).toMatchObject({ name: "signal-detector", enabled: true });
   });
 
+  test("lists bundled repo skills as profile dependencies", () => {
+    const appConfig = {
+      ...config(),
+      bundledHermesSkillsRoot: join(mkdtempSync(join(tmpdir(), "growth-hacker-bundled-skills-")), "skills")
+    };
+    writeExternalSkill(join(appConfig.bundledHermesSkillsRoot, "creative"), "guizang-social-card-skill", "Create social cards");
+
+    const skills = listHermesProfileSkills(appConfig, "growth-agent");
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]).toMatchObject({
+      name: "guizang-social-card-skill",
+      category: "creative",
+      description: "Create social cards",
+      enabled: true
+    });
+  });
+
   test("updates the disabled list for an allowed agent only", () => {
     const appConfig = config();
     writeSkill(appConfig, "openclaw-imports", "think", "Plan before implementation");

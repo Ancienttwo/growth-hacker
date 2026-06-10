@@ -49,6 +49,15 @@ describe("chat skill instructions", () => {
     expect(inferred.map((item) => item.name)).toEqual(["xiaohongshu-skill", "baoyu-infographic", "signal-detector"]);
   });
 
+  test("infers Guizang social cards for card and WeChat cover requests", () => {
+    const inferred = resolveAutomaticSkillHints("把这篇文章做成公众号封面，21:9 + 1:1 分享卡", [
+      skill({ name: "guizang-social-card-skill", category: "creative" }),
+      skill({ name: "baoyu-infographic", category: "creative" })
+    ]);
+
+    expect(inferred.map((item) => item.name)).toEqual(["guizang-social-card-skill", "baoyu-infographic"]);
+  });
+
   test("treats create image actions and baoyu typo as infographic work", () => {
     expect(
       resolveAutomaticSkillHints("GUI action: Create image.\n\nPrompt:\n小红书配图", [
@@ -69,6 +78,14 @@ describe("chat skill instructions", () => {
     expect(instructions).toContain("Baoyu infographic execution contract");
     expect(instructions).toContain('skill_view("baoyu-infographic")');
     expect(instructions).toContain("Do not invent an image path");
+  });
+
+  test("adds a Guizang social card execution contract for selected card work", () => {
+    const instructions = buildSkillInstructions([skill({ name: "guizang-social-card-skill", category: "creative" })]);
+
+    expect(instructions).toContain("Guizang social card execution contract");
+    expect(instructions).toContain('skill_view("guizang-social-card-skill")');
+    expect(instructions).toContain("Produce concrete HTML/image artifacts");
   });
 
   test("does not infer disabled or already selected skills", () => {

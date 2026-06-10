@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { HermesLlmSelection, JobSnapshot, SocialCronJob, SocialCronSchedule, SocialCronTaskType } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { resolvePlatformHermesAgent } from "./hermesProfiles";
 import { listHermesSocialCronJobs } from "./hermesCron";
 import type { JobStore } from "./jobs";
 import { createSocialBoardTask, listSocialAgents, runSocialBoardTask } from "./socialBoard";
@@ -57,7 +58,7 @@ export function listSocialCronJobs(config: AppConfig): SocialCronJob[] {
 }
 
 export function createSocialCronJob(config: AppConfig, input: CreateSocialCronJobInput): SocialCronJob {
-  const agentId = input.agentId?.trim() || config.defaultHermesProfile;
+  const agentId = input.agentId?.trim() || resolvePlatformHermesAgent(config, input.platform).id;
   assertAllowedAgent(config, agentId);
   assertSupportedTask(input.platform, input.taskType);
   const root = profileRoot(config, input.platform, input.profile);

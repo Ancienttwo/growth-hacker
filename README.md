@@ -45,6 +45,15 @@ Override the gateway target with `HERMES_API_BASE_URL` or `hermesApiBaseUrl` in 
 
 The dashboard exposes a read-only Hermes context surface at `/api/hermes/context`. It reads local Hermes state from `~/.hermes/state.db` and recent gateway activity from `~/.hermes/logs/gateway.log`, redacts obvious secrets, and powers the Hermes Context view in the UI. Use this for Hermes conversation/tool/runtime history; it does not depend on Codex UI or Codex thread state.
 
+## Bundled Skills
+
+Repo-local Hermes skills live under `skills/` and are exposed in the dashboard Skills view. Bootstrapping the `growth-agent` profile syncs those bundled skills into `~/.hermes/profiles/<agent>/skills/`.
+
+Current bundled skills:
+
+- `skills/social-media/xiaohongshu-skill`
+- `skills/creative/guizang-social-card-skill`
+
 ## Cron LLM Models
 
 Social cron jobs read Hermes' authenticated provider/model inventory through `hermes_cli.inventory`. The UI stores the selected `{ provider, model }` on each cron/board task, and auto-reply jobs pass that selection to Hermes one-shot execution for JSON-only reply decisions.

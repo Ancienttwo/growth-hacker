@@ -51,12 +51,15 @@ import remarkGfm from "remark-gfm";
 import type {
   ArtifactContent,
   ArtifactInfo,
+  AgentRunnerKind,
+  HermesProfileConfig,
   HermesContextSnapshot,
   HermesGatewayEvent,
   HermesLlmSelection,
   HermesModelOptions,
   HermesModelOption,
   HermesMessageSummary,
+  PlatformHermesProfile,
   HermesSessionSummary,
   HermesSkillInfo,
   JobSnapshot,
@@ -198,6 +201,10 @@ interface HermesSkillUpdateResponse {
 }
 
 type HermesContextResponse = HermesContextSnapshot;
+
+interface HermesProfileUpdateResponse {
+  profile: PlatformHermesProfile;
+}
 
 interface HermesChatStatus {
   available: boolean;
@@ -595,6 +602,7 @@ const dashboardNavById: Record<DashboardView, { id: DashboardView; labelKey: I18
   chat: { id: "chat", labelKey: "nav.chat", icon: MessageSquare },
   hermes: { id: "hermes", labelKey: "nav.hermes", icon: Activity },
   skills: { id: "skills", labelKey: "nav.skills", icon: Gauge },
+  config: { id: "config", labelKey: "nav.config", icon: SlidersHorizontal },
   setup: { id: "setup", labelKey: "nav.setup", icon: KeyRound }
 };
 
@@ -622,6 +630,9 @@ export function App() {
   const [socialCronJobs, setSocialCronJobs] = useState<SocialCronJob[]>([]);
   const [socialCronAgents, setSocialCronAgents] = useState<string[]>([]);
   const [socialAgents, setSocialAgents] = useState<SocialAgent[]>([]);
+  const [hermesProfileConfig, setHermesProfileConfig] = useState<HermesProfileConfig | null>(null);
+  const [hermesProfileDrafts, setHermesProfileDrafts] = useState<Record<string, { agentId: string; runner: AgentRunnerKind }>>({});
+  const [hermesProfileNotice, setHermesProfileNotice] = useState<string | null>(null);
   const [socialBoardTasks, setSocialBoardTasks] = useState<SocialBoardTask[]>([]);
   const [socialCalendarItems, setSocialCalendarItems] = useState<SocialTaskCalendarItem[]>([]);
   const [publishedPosts, setPublishedPosts] = useState<XhsPublishedPost[]>([]);
@@ -685,11 +696,12 @@ export function App() {
       socialCalendarPayload,
       hermesModelsPayload,
       hermesContextPayload,
+      hermesProfileConfigPayload,
       chatStatusPayload,
       hermesVideoAuthPayload
     ] = await Promise.all([
       api<WorkspacesResponse>("/api/workspaces"),
-      api<RuntimeResponse>("/api/runtimes"),
+      api<RuntimeResponse>("/api/runtimes").catch(() => ({ runtimes: [] })),
       api<MigrationPlan>("/api/migrations/xiaohongshu-legacy/plan", { method: "POST" }),
       api<XhsAuthStatus>("/api/platforms/xiaohongshu/auth"),
       api<SocialPlatformsResponse>("/api/platforms").catch(() => ({ platforms: fallbackSocialPlatforms })),
@@ -703,6 +715,7 @@ export function App() {
       api<SocialCalendarResponse>("/api/social-calendar/items").catch(() => ({ items: [] })),
       api<HermesModelOptions>("/api/hermes/models").catch(() => fallbackHermesModelOptions),
       api<HermesContextResponse>("/api/hermes/context").catch(() => null),
+      api<HermesProfileConfig>("/api/hermes/profile-config").catch(() => null),
       getHermesChatStatus(),
       api<HermesVideoAuthStatus>("/api/hermes/video-auth/status").catch(() => null)
     ]);
@@ -714,6 +727,7 @@ export function App() {
     setSocialCronJobs(socialCronPayload.jobs);
     setSocialCronAgents(socialCronPayload.agents);
     setSocialAgents(socialCronPayload.socialAgents ?? socialBoardPayload.agents);
+    applyHermesProfileConfig(hermesProfileConfigPayload);
     setSocialBoardTasks(socialBoardPayload.tasks);
     setSocialCalendarItems(socialCalendarPayload.items);
     setHermesModelOptions(hermesModelsPayload.models.length ? hermesModelsPayload : fallbackHermesModelOptions);
@@ -809,6 +823,10 @@ export function App() {
   const hermes = runtimes.find((runtime) => runtime.kind === "hermes");
   const openclaw = runtimes.find((runtime) => runtime.kind === "openclaw");
   const activePlatformInfo = useMemo(() => socialPlatformInfo(platforms, activePlatform), [activePlatform, platforms]);
+  const activeHermesProfile = useMemo(
+    () => hermesProfileConfig?.profiles.find((profile) => profile.platform === activePlatform),
+    [activePlatform, hermesProfileConfig]
+  );
   const visibleModeViewIds = useMemo(() => visibleDashboardViews(activePlatformInfo), [activePlatformInfo]);
   const modeSpecificNav = useMemo(
     () => visibleModeViewIds.filter((view) => !sharedDashboardViews.includes(view)).map((view) => dashboardNavById[view]),
@@ -867,6 +885,10 @@ export function App() {
   }, [activePlatformInfo]);
 
   useEffect(() => {
+    if (activeHermesProfile?.agentId) setSocialCronAgentId(activeHermesProfile.agentId);
+  }, [activePlatform, activeHermesProfile?.agentId]);
+
+  useEffect(() => {
     const next = selectProfileForPlatform(profiles, activePlatform, selectedProfilesByPlatform[activePlatform]);
     setSelectedProfile((current) => (isSameWorkspace(current, next) ? current : next));
   }, [activePlatform, profiles, selectedProfilesByPlatform]);
@@ -921,6 +943,7 @@ export function App() {
   const selectedSocialAgent =
     socialAgents.find((agent) => agent.id === selectedChatAgentId) ??
     socialAgents.find((agent) => agent.id === socialCronAgentId) ??
+    socialAgents.find((agent) => agent.id === activeHermesProfile?.agentId) ??
     socialAgents[0];
   const selectedLlm = hermesLlmFromValue(selectedLlmValue) ?? hermesModelOptions.current;
   const selectedChatLlm =
@@ -942,6 +965,16 @@ export function App() {
     }
     void reloadHermesSkills(selectedSocialAgent.id);
   }, [selectedSocialAgent?.id]);
+
+  function applyHermesProfileConfig(payload: HermesProfileConfig | null): void {
+    setHermesProfileConfig(payload);
+    if (!payload) return;
+    setHermesProfileDrafts(
+      Object.fromEntries(payload.profiles.map((profile) => [profile.platform, { agentId: profile.agentId, runner: profile.runner }]))
+    );
+    setSocialAgents(payload.agents);
+    setSocialCronAgents(payload.agents.map((agent) => agent.id));
+  }
 
   function toggleDirectory(path: string) {
     setExpandedDirectories((current) => {
@@ -1404,6 +1437,59 @@ export function App() {
     const payload = await api<HermesSkillsResponse>(`/api/agents/${encodeURIComponent(agentId)}/skills`).catch(() => ({ skills: [] }));
     setHermesSkills(payload.skills);
     return payload.skills;
+  }
+
+  async function reloadHermesProfileConfig(): Promise<HermesProfileConfig | null> {
+    const payload = await api<HermesProfileConfig>("/api/hermes/profile-config").catch(() => null);
+    applyHermesProfileConfig(payload);
+    return payload;
+  }
+
+  function updateHermesProfileDraft(platform: string, patch: Partial<{ agentId: string; runner: AgentRunnerKind }>) {
+    setHermesProfileDrafts((current) => {
+      const profile = hermesProfileConfig?.profiles.find((item) => item.platform === platform);
+      const currentDraft = current[platform] ?? {
+        agentId: profile?.agentId ?? "",
+        runner: profile?.runner ?? "hermes"
+      };
+      return { ...current, [platform]: { ...currentDraft, ...patch } };
+    });
+    setHermesProfileNotice(null);
+  }
+
+  async function saveHermesPlatformProfile(platform: string) {
+    const draft = hermesProfileDrafts[platform];
+    if (!draft?.agentId.trim()) return;
+    setBusy(`hermes-profile-save-${platform}`);
+    try {
+      const payload = await api<HermesProfileUpdateResponse>(`/api/hermes/profile-config/platforms/${encodeURIComponent(platform)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft)
+      });
+      await reloadHermesProfileConfig();
+      setHermesProfileNotice(t("profiles.saveSuccess", { platform: platformLabel[payload.profile.platform] ?? payload.profile.platform }));
+    } catch (error) {
+      setHermesProfileNotice(error instanceof Error ? error.message : t("profiles.saveFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function bootstrapHermesPlatformProfiles() {
+    setBusy("hermes-profile-bootstrap");
+    setHermesProfileNotice(null);
+    try {
+      const job = await api<JobSnapshot>("/api/hermes/profile-config/bootstrap", { method: "POST" });
+      watchJob(job, () => {
+        setBusy((current) => (current === "hermes-profile-bootstrap" ? null : current));
+        void reloadHermesProfileConfig();
+      });
+      setHermesProfileNotice(t("profiles.bootstrapStarted"));
+    } catch (error) {
+      setHermesProfileNotice(error instanceof Error ? error.message : t("profiles.bootstrapFailed"));
+      setBusy(null);
+    }
   }
 
   async function reloadHermesContext(sessionId = hermesContext?.selectedSessionId): Promise<HermesContextSnapshot | null> {
@@ -2213,6 +2299,13 @@ export function App() {
                 skills={hermesSkills}
               />
             ) : null}
+            {activeView === "config" ? (
+              <HermesProfileConfigSubNav
+                activePlatform={activePlatform}
+                config={hermesProfileConfig}
+                onSelectPlatform={selectPlatformMode}
+              />
+            ) : null}
             {activeView === "setup" ? <SetupSubNav auth={auth} hermes={hermes} openclaw={openclaw} /> : null}
           </ScrollArea>
         </aside>
@@ -2416,6 +2509,22 @@ export function App() {
                   onToggle={(skill) => void toggleHermesSkill(skill)}
                   search={skillSearch}
                   skills={hermesSkills}
+                />
+              ) : null}
+
+              {activeView === "config" ? (
+                <HermesProfileConfigView
+                  activePlatform={activePlatform}
+                  busy={busy}
+                  config={hermesProfileConfig}
+                  drafts={hermesProfileDrafts}
+                  job={selectedRuntimeJob}
+                  notice={hermesProfileNotice}
+                  onBootstrap={() => void bootstrapHermesPlatformProfiles()}
+                  onRefresh={() => void reloadHermesProfileConfig()}
+                  onSave={(platform) => void saveHermesPlatformProfile(platform)}
+                  onUpdateDraft={updateHermesProfileDraft}
+                  platforms={platforms}
                 />
               ) : null}
 
@@ -3226,6 +3335,42 @@ function SkillsSubNav({
       <MetricRow label={t("common.enabled")} value={String(enabled)} />
       <MetricRow label={t("common.disabled")} value={String(skills.length - enabled)} />
       <MetricRow label={t("common.categories")} value={String(categories)} />
+    </div>
+  );
+}
+
+function HermesProfileConfigSubNav({
+  activePlatform,
+  config,
+  onSelectPlatform
+}: {
+  activePlatform: PlatformId;
+  config: HermesProfileConfig | null;
+  onSelectPlatform: (platform: PlatformId) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="sub-nav-body">
+      <SectionLabel icon={SlidersHorizontal} label={t("section.platformProfiles")} />
+      <div className="space-y-1">
+        {(config?.profiles ?? []).map((profile) => (
+          <button
+            className={cn("sub-nav-row", activePlatform === profile.platform && "sub-nav-row-active")}
+            key={profile.platform}
+            onClick={() => onSelectPlatform(profile.platform)}
+            type="button"
+          >
+            <span className="truncate">{platformLabel[profile.platform] ?? profile.platform}</span>
+            <Badge variant={profile.profileExists ? "secondary" : "outline"}>{profile.agentId}</Badge>
+          </button>
+        ))}
+      </div>
+      {!config?.profiles.length ? <EmptyCompact label={t("empty.noProfiles")} /> : null}
+
+      <Separator />
+
+      <SectionLabel icon={Bot} label={t("section.agents")} />
+      <AgentList agents={config?.agents ?? []} />
     </div>
   );
 }
@@ -5422,6 +5567,112 @@ function SkillsView({
   );
 }
 
+function HermesProfileConfigView({
+  activePlatform,
+  busy,
+  config,
+  drafts,
+  job,
+  notice,
+  onBootstrap,
+  onRefresh,
+  onSave,
+  onUpdateDraft,
+  platforms
+}: {
+  activePlatform: PlatformId;
+  busy: string | null;
+  config: HermesProfileConfig | null;
+  drafts: Record<string, { agentId: string; runner: AgentRunnerKind }>;
+  job: JobSnapshot | null;
+  notice: string | null;
+  onBootstrap: () => void;
+  onRefresh: () => void;
+  onSave: (platform: string) => void;
+  onUpdateDraft: (platform: string, patch: Partial<{ agentId: string; runner: AgentRunnerKind }>) => void;
+  platforms: SocialPlatformInfo[];
+}) {
+  const { t } = useI18n();
+  const missingCount = config?.profiles.filter((profile) => !profile.profileExists).length ?? 0;
+  return (
+    <div className="profile-config-shell">
+      <div className="skills-toolbar">
+        <div>
+          <p>{config?.configPath ?? "~/.growth/config/hermes-profiles.json"}</p>
+          <h3>{t("profiles.title")}</h3>
+        </div>
+        <div className="skills-toolbar-actions">
+          <Button onClick={onRefresh} size="sm" type="button" variant="outline">
+            <RefreshCcw className="size-3.5" />
+            {t("common.refresh")}
+          </Button>
+          <Button disabled={!config || busy === "hermes-profile-bootstrap"} onClick={onBootstrap} size="sm" type="button">
+            {busy === "hermes-profile-bootstrap" ? <Loader2 className="size-3.5 animate-spin" /> : <UserPlus className="size-3.5" />}
+            {missingCount ? t("profiles.createMissing", { count: missingCount }) : t("profiles.syncProfiles")}
+          </Button>
+        </div>
+      </div>
+
+      {notice ? <div className="notice-line">{notice}</div> : null}
+
+      <div className="profile-config-list">
+        {(config?.profiles ?? []).map((profile) => {
+          const platform = socialPlatformInfo(platforms, profile.platform);
+          const draft = drafts[profile.platform] ?? { agentId: profile.agentId, runner: profile.runner };
+          const changed = draft.agentId !== profile.agentId || draft.runner !== profile.runner;
+          return (
+            <article className={cn("profile-config-row", activePlatform === profile.platform && "profile-config-row-active")} key={profile.platform}>
+              <div className="profile-config-platform">
+                <PlatformLogo platform={platform} />
+                <div>
+                  <h4>{platform.label}</h4>
+                  <p>{profile.profilePath}</p>
+                </div>
+              </div>
+              <div className="profile-config-controls">
+                <Input
+                  aria-label={t("profiles.agentIdFor", { platform: platform.label })}
+                  onChange={(event) => onUpdateDraft(profile.platform, { agentId: event.target.value })}
+                  value={draft.agentId}
+                />
+                <Select onValueChange={(value) => onUpdateDraft(profile.platform, { runner: value as AgentRunnerKind })} value={draft.runner}>
+                  <SelectTrigger aria-label={t("profiles.runnerFor", { platform: platform.label })}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hermes">hermes</SelectItem>
+                    <SelectItem value="local">local</SelectItem>
+                    <SelectItem value="openclaw">openclaw</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  disabled={!changed || busy === `hermes-profile-save-${profile.platform}` || !draft.agentId.trim()}
+                  onClick={() => onSave(profile.platform)}
+                  size="sm"
+                  type="button"
+                  variant={changed ? "default" : "outline"}
+                >
+                  {busy === `hermes-profile-save-${profile.platform}` ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                  {t("common.save")}
+                </Button>
+              </div>
+              <div className="profile-config-meta">
+                <StatusBadge state={profile.profileExists ? "ok" : "warn"} label={profile.profileExists ? t("common.ready") : t("common.missing")} />
+                <Badge variant="outline">{profile.source}</Badge>
+                <Badge variant="outline">{profile.runner}</Badge>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      {!config?.profiles.length ? <EmptyWide label={t("empty.noProfiles")} /> : null}
+
+      <JobLogPanel description={t("profiles.jobDescription")} emptyLabel={t("profiles.noProfileJob")} job={job} />
+    </div>
+  );
+}
+
 function HermesContextView({
   context,
   onRefresh,
@@ -6134,6 +6385,7 @@ function topbarContext(activeView: DashboardView, selectedProfile: WorkspaceProf
   if (activeView === "chat") return t("topbar.agentConversation");
   if (activeView === "hermes") return t("topbar.hermesContext");
   if (activeView === "skills") return t("topbar.profileSkills");
+  if (activeView === "config") return t("topbar.profileConfig");
   if (activeView === "setup") return t("topbar.runtimeAuth");
   return selectedProfile ? `${selectedProfile.platform}/${selectedProfile.profile}` : t("topbar.socialOps");
 }

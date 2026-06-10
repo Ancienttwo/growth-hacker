@@ -13,6 +13,7 @@ export function resolveAutomaticSkillHints(message: string, skills: HermesSkillI
   };
 
   if (looksLikeXiaohongshuWork(message)) add("xiaohongshu-skill");
+  if (looksLikeSocialCardWork(message)) add("guizang-social-card-skill");
   if (looksLikeInfographicWork(message)) add("baoyu-infographic");
   if (looksLikeGrowthSignalWork(message)) add("signal-detector");
 
@@ -41,11 +42,26 @@ function looksLikeInfographicWork(message: string): boolean {
   );
 }
 
+function looksLikeSocialCardWork(message: string): boolean {
+  return /guizang-social-card-skill|social cards?|rednote card|小红书图文|小紅書圖文|rednote 图文|rednote 圖文|图文组图|圖文組圖|轮播图文|輪播圖文|公众号封面|公眾號封面|微信封面|wechat cover|21:9|1:1 分享卡|瑞士风.*小红书|瑞士風.*小紅書|电子杂志风|電子雜誌風/.test(
+    message.toLowerCase()
+  );
+}
+
 function looksLikeGrowthSignalWork(message: string): boolean {
   return /增长|增長|growth|渠道|分发|分發|受众|受眾|实验|實驗|小红书|小紅書|xiaohongshu|\bxhs\b/.test(message.toLowerCase());
 }
 
 function skillOutputQualityContracts(skill: HermesSkillInfo): string[] {
+  if (skill.name === "guizang-social-card-skill") {
+    return [
+      "",
+      "Guizang social card execution contract:",
+      "- For Xiaohongshu/Rednote social card sets or WeChat cover pairs, call `skill_view(\"guizang-social-card-skill\")` when available and follow that local skill workflow.",
+      "- Produce concrete HTML/image artifacts before claiming the visual package is complete.",
+      "- Preserve supplied screenshots/photos as evidence assets unless the user explicitly asks for replacement imagery."
+    ];
+  }
   if (skill.name === "baoyu-infographic") {
     return [
       "",

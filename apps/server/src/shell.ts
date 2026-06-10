@@ -6,11 +6,14 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   error?: string;
+  signal?: NodeJS.Signals | null;
+  timedOut?: boolean;
 }
 
 export interface RunOptions {
   cwd?: string;
   timeoutMs?: number;
+  timeoutKillGraceMs?: number;
   env?: NodeJS.ProcessEnv;
   onLine?: (line: string) => void;
   redactOutput?: boolean;
@@ -22,6 +25,8 @@ export function runCommand(command: string, args: string[] = [], options: RunOpt
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    let forceKillTimer: NodeJS.Timeout | undefined;
 
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -32,7 +37,11 @@ export function runCommand(command: string, args: string[] = [], options: RunOpt
     const timer = options.timeoutMs
       ? setTimeout(() => {
           if (!settled) {
+            timedOut = true;
             child.kill("SIGTERM");
+            forceKillTimer = setTimeout(() => {
+              if (!settled) child.kill("SIGKILL");
+            }, options.timeoutKillGraceMs ?? 1000);
           }
         }, options.timeoutMs)
       : undefined;
@@ -50,17 +59,23 @@ export function runCommand(command: string, args: string[] = [], options: RunOpt
     child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
 
     child.on("error", (error) => {
+      if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve({ command: all, exitCode: null, stdout, stderr, error: error.message });
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      resolve({ command: all, exitCode: null, stdout, stderr, error: error.message, timedOut });
     });
 
-    child.on("close", (exitCode) => {
+    child.on("close", (exitCode, signal) => {
+      if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         command: all,
         exitCode,
+        signal,
+        timedOut,
         stdout: options.redactOutput === false ? stdout : redact(stdout),
         stderr: options.redactOutput === false ? stderr : redact(stderr)
       });

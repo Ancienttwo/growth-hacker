@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AppConfig } from "./config";
+import { assertAllowedHermesAgent } from "./hermesProfiles";
 
 export interface HermesChatStatus {
   available: boolean;
@@ -271,9 +272,7 @@ function normalizeProvider(value: string | undefined): string | undefined {
 }
 
 function assertAllowedAgent(config: AppConfig, agentId: string): void {
-  if (!config.socialAgents.some((agent) => agent.id === agentId)) {
-    throw new Error(`agent_not_allowed:${agentId}`);
-  }
+  assertAllowedHermesAgent(config, agentId);
 }
 
 function assertRunId(runId: string): void {
