@@ -2,10 +2,9 @@
   "version": 1,
   "profile": "stable-root-progressive-subdir",
   "functional_block_selector": {
-    "script": "scripts/select-agent-context-blocks.sh",
+    "script": ".ai/harness/scripts/select-agent-context-blocks.sh",
     "config_file": ".ai/context/agent-context-blocks.txt",
     "env": "REPO_HARNESS_CONTEXT_BLOCKS",
-    "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
     "rule": "compatibility selector; capability registry is the source of truth"
   },
   "lsp_profiles": {
@@ -17,7 +16,7 @@
     "AGENTS.md",
     "docs/spec.md",
     "tasks/current.md",
-    "tasks/todo.md",
+    "tasks/todos.md",
     "tasks/lessons.md",
     ".ai/context/capabilities.json",
     ".ai/harness/policy.json"

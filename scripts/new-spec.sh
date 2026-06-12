@@ -1,44 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+TARGET="$REPO_ROOT/.ai/harness/scripts/new-spec.sh"
 
-mkdir -p docs .claude/templates
-
-template_file=".claude/templates/spec.template.md"
-if [[ ! -f "$template_file" ]]; then
-  cat > "$template_file" <<'SPEC_TEMPLATE_EOF'
-# Product Spec: {{PROJECT_NAME}}
-
-> **Status**: Draft
-> **Last Updated**: {{TIMESTAMP}}
-> **Owner**: Planner
-
-## Product Outcome
-
-Describe the stable user or operator outcome this repo should deliver.
-
-## Success Criteria
-
-- Primary workflow:
-- Quality bar:
-- Out of scope:
-
-## Constraints
-
-- Technical:
-- Compliance:
-- Delivery:
-SPEC_TEMPLATE_EOF
+if [[ ! -f "$TARGET" ]]; then
+  echo "Missing repo-harness helper runtime: $TARGET" >&2
+  exit 1
 fi
 
-project_name="$(basename "$PWD")"
-timestamp="$(date '+%Y-%m-%d %H:%M')"
-
-sed \
-  -e "s/{{PROJECT_NAME}}/${project_name}/g" \
-  -e "s/{{TIMESTAMP}}/${timestamp}/g" \
-  "$template_file" > docs/spec.md
-
-echo "Created docs/spec.md"
+exec bash "$TARGET" "$@"

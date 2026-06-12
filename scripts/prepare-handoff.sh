@@ -1,22 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+TARGET="$REPO_ROOT/.ai/harness/scripts/prepare-handoff.sh"
 
-if [[ -f ".ai/hooks/lib/workflow-state.sh" ]]; then
-  # shellcheck source=/dev/null
-  . ".ai/hooks/lib/workflow-state.sh"
-  workflow_write_handoff "${1:-manual}"
-  echo "Updated $(workflow_handoff_file)"
-  exit 0
+if [[ ! -f "$TARGET" ]]; then
+  echo "Missing repo-harness helper runtime: $TARGET" >&2
+  exit 1
 fi
 
-mkdir -p .ai/harness/handoff
-cat > .ai/harness/handoff/current.md <<EOF_HANDOFF
-# Harness Handoff
-
-> **Generated**: $(date '+%Y-%m-%d %H:%M:%S')
-> **Reason**: ${1:-manual}
-EOF_HANDOFF
-echo "Updated .ai/harness/handoff/current.md"
+exec bash "$TARGET" "$@"

@@ -72,13 +72,25 @@
       ]
     }
   },
+  "documentation": {
+    "referenceConfigs": {
+      "source": "user-level-runtime-docs",
+      "repoStubDirectory": "docs/reference-configs",
+      "packageDirectory": "assets/reference-configs",
+      "resolverCommand": "repo-harness docs path <doc-id>",
+      "stubMarker": "<!-- repo-harness: reference-config-stub v1 -->"
+    }
+  },
   "helpers": {
+    "runtimeDirectory": ".ai/harness/scripts",
+    "compatibilityDirectory": "scripts",
     "scripts": [
       "new-spec.sh",
       "new-sprint.sh",
       "new-plan.sh",
       "capture-plan.sh",
       "plan-to-todo.sh",
+      "contract-run.ts",
       "contract-worktree.sh",
       "ship-worktrees.sh",
       "archive-workflow.sh",
@@ -87,8 +99,10 @@
       "verify-contract.sh",
       "summarize-failures.sh",
       "verify-sprint.sh",
+      "sprint-backlog.sh",
       "check-task-sync.sh",
       "check-deploy-sql-order.sh",
+      "check-architecture-sync.sh",
       "check-agent-tooling.sh",
       "check-context-files.sh",
       "check-brain-manifest.sh",
@@ -98,28 +112,31 @@
       "ensure-task-workflow.sh",
       "check-task-workflow.sh",
       "maintenance-triage.sh",
+      "heartbeat-triage.sh",
       "switch-plan.sh",
       "workflow-contract.ts",
       "inspect-project-state.ts",
       "migrate-workflow-docs.ts",
       "migrate-project-template.sh",
-      "context-budget.ts",
       "capability-resolver.ts",
       "architecture-event.ts",
       "capability-config.ts",
-      "architecture-drift.sh",
+      "architecture-queue.sh",
       "archive-architecture-request.sh",
       "context-contract-sync.sh",
       "workstream-sync.sh",
       "prepare-codex-handoff.sh",
       "codex-handoff-resume.sh"
-    ]
+    ],
+    "dir": ".ai/harness/scripts"
   },
   "artifacts": {
     "runtimeManifest": ".ai/harness/workflow-contract.json",
     "requiredDirectories": [
       "plans",
       "plans/archive",
+      "plans/prds",
+      "plans/sprints",
       "tasks",
       "tasks/archive",
       "tasks/contracts",
@@ -129,15 +146,17 @@
       ".claude/templates",
       ".ai/context",
       ".ai/harness",
+      ".ai/harness/scripts",
       ".ai/harness/checks",
       ".ai/harness/failures",
       ".ai/harness/handoff",
-      ".ai/harness/context-budget",
+      ".ai/harness/scripts",
       ".ai/harness/security",
       ".ai/harness/planning",
       ".ai/harness/architecture",
       ".ai/harness/worktrees",
       ".ai/harness/runs",
+      ".ai/harness/triage",
       "docs/architecture",
       "docs/architecture/domains",
       "docs/architecture/modules",
@@ -151,7 +170,8 @@
       "deploy/submissions",
       "deploy/runbooks",
       "deploy/release-checklists",
-      "deploy/sql"
+      "deploy/sql",
+      "docs/researches"
     ],
     "requiredFiles": [
       "docs/spec.md",
@@ -161,48 +181,50 @@
       ".claude/templates/contract.template.md",
       ".claude/templates/review.template.md",
       ".claude/templates/implementation-notes.template.md",
-      "scripts/new-spec.sh",
-      "scripts/new-sprint.sh",
-      "scripts/new-plan.sh",
-      "scripts/capture-plan.sh",
-      "scripts/plan-to-todo.sh",
-      "scripts/contract-worktree.sh",
-      "scripts/ship-worktrees.sh",
-      "scripts/archive-workflow.sh",
-      "scripts/refresh-current-status.sh",
-      "scripts/prepare-handoff.sh",
-      "scripts/verify-contract.sh",
-      "scripts/summarize-failures.sh",
-      "scripts/verify-sprint.sh",
-      "scripts/check-task-sync.sh",
-      "scripts/check-deploy-sql-order.sh",
-      "scripts/check-agent-tooling.sh",
-      "scripts/check-context-files.sh",
-      "scripts/sync-brain-docs.sh",
-      "scripts/check-skill-version.ts",
-      "scripts/select-agent-context-blocks.sh",
-      "scripts/ensure-task-workflow.sh",
-      "scripts/check-task-workflow.sh",
-      "scripts/maintenance-triage.sh",
-      "scripts/switch-plan.sh",
-      "scripts/workflow-contract.ts",
-      "scripts/inspect-project-state.ts",
-      "scripts/migrate-workflow-docs.ts",
-      "scripts/migrate-project-template.sh",
-      "scripts/context-budget.ts",
-      "scripts/capability-resolver.ts",
-      "scripts/architecture-event.ts",
-      "scripts/capability-config.ts",
-      "scripts/architecture-drift.sh",
-      "scripts/archive-architecture-request.sh",
-      "scripts/context-contract-sync.sh",
-      "scripts/workstream-sync.sh",
-      "scripts/prepare-codex-handoff.sh",
-      "scripts/codex-handoff-resume.sh",
+      ".ai/harness/scripts/new-spec.sh",
+      ".ai/harness/scripts/new-sprint.sh",
+      ".ai/harness/scripts/new-plan.sh",
+      ".ai/harness/scripts/capture-plan.sh",
+      ".ai/harness/scripts/plan-to-todo.sh",
+      ".ai/harness/scripts/contract-run.ts",
+      ".ai/harness/scripts/contract-worktree.sh",
+      ".ai/harness/scripts/ship-worktrees.sh",
+      ".ai/harness/scripts/archive-workflow.sh",
+      ".ai/harness/scripts/refresh-current-status.sh",
+      ".ai/harness/scripts/prepare-handoff.sh",
+      ".ai/harness/scripts/verify-contract.sh",
+      ".ai/harness/scripts/summarize-failures.sh",
+      ".ai/harness/scripts/verify-sprint.sh",
+      ".ai/harness/scripts/sprint-backlog.sh",
+      ".ai/harness/scripts/check-task-sync.sh",
+      ".ai/harness/scripts/check-deploy-sql-order.sh",
+      ".ai/harness/scripts/check-architecture-sync.sh",
+      ".ai/harness/scripts/check-agent-tooling.sh",
+      ".ai/harness/scripts/check-context-files.sh",
+      ".ai/harness/scripts/sync-brain-docs.sh",
+      ".ai/harness/scripts/check-skill-version.ts",
+      ".ai/harness/scripts/select-agent-context-blocks.sh",
+      ".ai/harness/scripts/ensure-task-workflow.sh",
+      ".ai/harness/scripts/check-task-workflow.sh",
+      ".ai/harness/scripts/maintenance-triage.sh",
+      ".ai/harness/scripts/heartbeat-triage.sh",
+      ".ai/harness/scripts/switch-plan.sh",
+      ".ai/harness/scripts/workflow-contract.ts",
+      ".ai/harness/scripts/inspect-project-state.ts",
+      ".ai/harness/scripts/migrate-workflow-docs.ts",
+      ".ai/harness/scripts/migrate-project-template.sh",
+      ".ai/harness/scripts/capability-resolver.ts",
+      ".ai/harness/scripts/architecture-event.ts",
+      ".ai/harness/scripts/capability-config.ts",
+      ".ai/harness/scripts/architecture-queue.sh",
+      ".ai/harness/scripts/archive-architecture-request.sh",
+      ".ai/harness/scripts/context-contract-sync.sh",
+      ".ai/harness/scripts/workstream-sync.sh",
+      ".ai/harness/scripts/prepare-codex-handoff.sh",
+      ".ai/harness/scripts/codex-handoff-resume.sh",
       "tasks/current.md",
-      "tasks/todo.md",
+      "tasks/todos.md",
       "tasks/lessons.md",
-      "tasks/research.md",
       "docs/architecture/index.md",
       ".ai/context/context-map.json",
       ".ai/context/capabilities.json",
@@ -214,36 +236,41 @@
       "docs/reference-configs/agentic-development-flow.md",
       "docs/reference-configs/external-tooling.md",
       "docs/reference-configs/sprint-contracts.md",
+      "docs/reference-configs/heartbeat-triage.md",
       "docs/reference-configs/handoff-protocol.md",
       "docs/reference-configs/document-generation.md",
       "docs/reference-configs/global-working-rules.md",
-      "deploy/README.md"
+      "deploy/README.md",
+      "docs/researches/README.md"
     ],
     "runtimeFiles": [
       ".ai/harness/checks/latest.json",
       ".ai/harness/checks/post-bash-latest.json",
       ".ai/harness/events.jsonl",
+      ".ai/harness/archive/",
       ".ai/harness/failures/latest.jsonl",
       ".ai/harness/handoff/current.md",
       ".ai/harness/handoff/resume.md",
-      ".ai/harness/context-budget/latest.json",
       ".ai/harness/capability-context/",
       ".ai/harness/security/.gitkeep",
       ".ai/harness/planning/",
       ".ai/harness/architecture/events.jsonl",
       ".ai/harness/active-plan",
       ".ai/harness/active-worktree",
+      ".ai/harness/sprint/",
       ".ai/harness/worktrees/",
-      ".ai/harness/runs/.gitkeep"
+      ".ai/harness/runs/.gitkeep",
+      ".ai/harness/triage/.gitkeep",
+      ".ai/harness/triage/inbox.md"
     ]
   },
   "documents": {
     "spec": "docs/spec.md",
     "planDirectory": "plans",
-    "deferredGoalLedger": "tasks/todo.md",
-    "researchNotes": "tasks/research.md",
+    "deferredGoalLedger": "tasks/todos.md",
     "implementationNotesDirectory": "tasks/notes",
-    "lessonsLog": "tasks/lessons.md"
+    "lessonsLog": "tasks/lessons.md",
+    "researchReportsDirectory": "docs/researches"
   },
   "migrations": {
     "legacyVersions": [
@@ -319,10 +346,25 @@
             "docs/PROGRESS.md"
           ],
           "targetPaths": [
-            "tasks/research.md",
+            "docs/researches/legacy-progress-import.md",
             "tasks/archive/legacy-docs-PROGRESS.md"
           ],
-          "summary": "Move execution-log style progress content into research/archive surfaces."
+          "summary": "Move execution-log style progress content into research reports and archive surfaces."
+        },
+        {
+          "id": "legacy-singular-todo-file",
+          "signal": "legacy-singular-todo-file",
+          "action": "archive",
+          "risk": "low",
+          "ownership": "user_authored",
+          "paths": [
+            "tasks/todo.md"
+          ],
+          "targetPaths": [
+            "tasks/todos.md",
+            "tasks/archive/legacy-tasks-todo.md"
+          ],
+          "summary": "Archive the legacy singular todo ledger and normalize the canonical deferred-goal ledger to tasks/todos.md."
         },
         {
           "id": "legacy-task-checklist-format",
@@ -331,12 +373,26 @@
           "risk": "medium",
           "ownership": "user_authored",
           "paths": [
-            "tasks/todo.md"
+            "tasks/todos.md"
           ],
           "targetPaths": [
             "tasks/archive/legacy-tasks-todo.md"
           ],
-          "summary": "Archive old task checklists before rewriting tasks/todo.md as the active execution projection."
+          "summary": "Archive old task checklists before rewriting tasks/todos.md as the active execution projection."
+        },
+        {
+          "id": "legacy-task-sprint-prds",
+          "signal": "legacy-task-sprint-prds",
+          "action": "reconfigure",
+          "risk": "low",
+          "ownership": "user_authored",
+          "paths": [
+            "tasks/sprints/*.sprint.md"
+          ],
+          "targetPaths": [
+            "plans/sprints/*.sprint.md"
+          ],
+          "summary": "Move sprint backlog files out of tasks/ and into the sprint catalog under plans/sprints/; keep plans/prds/ for upper-layer PRDs."
         },
         {
           "id": "runtime-contract-refresh",
@@ -363,14 +419,68 @@
           "summary": "Merge the versioned upgrade strategy into the harness policy without overwriting explicit repo overrides."
         },
         {
+          "id": "legacy-root-helper-runtime",
+          "signal": "legacy-root-helper-runtime",
+          "action": "remove",
+          "risk": "medium",
+          "ownership": "known_generated",
+          "cleanupMode": "generated_helper",
+          "paths": [
+            "scripts/architecture-drift.sh",
+            "scripts/architecture-event.ts",
+            "scripts/architecture-queue.sh",
+            "scripts/archive-architecture-request.sh",
+            "scripts/archive-workflow.sh",
+            "scripts/capability-config.ts",
+            "scripts/capability-resolver.ts",
+            "scripts/capture-plan.sh",
+            "scripts/check-agent-tooling.sh",
+            "scripts/check-architecture-sync.sh",
+            "scripts/check-brain-manifest.sh",
+            "scripts/check-context-files.sh",
+            "scripts/check-deploy-sql-order.sh",
+            "scripts/check-skill-version.ts",
+            "scripts/check-task-sync.sh",
+            "scripts/check-task-workflow.sh",
+            "scripts/codex-handoff-resume.sh",
+            "scripts/context-contract-sync.sh",
+            "scripts/contract-run.ts",
+            "scripts/contract-worktree.sh",
+            "scripts/ensure-task-workflow.sh",
+            "scripts/heartbeat-triage.sh",
+            "scripts/inspect-project-state.ts",
+            "scripts/maintenance-triage.sh",
+            "scripts/migrate-project-template.sh",
+            "scripts/migrate-workflow-docs.ts",
+            "scripts/new-plan.sh",
+            "scripts/new-spec.sh",
+            "scripts/new-sprint.sh",
+            "scripts/plan-to-todo.sh",
+            "scripts/prepare-codex-handoff.sh",
+            "scripts/prepare-handoff.sh",
+            "scripts/refresh-current-status.sh",
+            "scripts/select-agent-context-blocks.sh",
+            "scripts/ship-worktrees.sh",
+            "scripts/skill-factory-check.sh",
+            "scripts/skill-factory-create.sh",
+            "scripts/sprint-backlog.sh",
+            "scripts/summarize-failures.sh",
+            "scripts/switch-plan.sh",
+            "scripts/sync-brain-docs.sh",
+            "scripts/verify-contract.sh",
+            "scripts/verify-sprint.sh",
+            "scripts/workflow-contract.ts",
+            "scripts/workstream-sync.sh"
+          ],
+          "summary": "Remove legacy repo-harness helper scripts from root scripts/ only when file content is identifiable as generated repo-harness runtime; preserve ambiguous app-owned scripts."
+        },
+        {
           "id": "legacy-skill-factory-generated-assets",
           "signal": "legacy-skill-factory-surface",
           "action": "remove",
           "risk": "medium",
           "ownership": "known_generated",
           "paths": [
-            "scripts/skill-factory-check.sh",
-            "scripts/skill-factory-create.sh",
             ".ai/hooks/lib/memory-state.sh",
             ".ai/hooks/lib/skill-factory.sh",
             ".ai/hooks/memory-intake.sh",
@@ -419,6 +529,29 @@
           "summary": "Remove generated Claude hook shims after .ai/hooks becomes the shared hook implementation layer."
         },
         {
+          "id": "split-post-tool-observer-hooks",
+          "signal": "stale-split-post-tool-hooks",
+          "action": "remove",
+          "risk": "low",
+          "ownership": "known_generated",
+          "paths": [
+            ".ai/hooks/trace-event.sh",
+            ".ai/hooks/context-pressure-hook.sh"
+          ],
+          "summary": "Remove the split PostToolUse observer hooks replaced by the merged post-tool-observer.sh."
+        },
+        {
+          "id": "legacy-architecture-drift-helper",
+          "signal": "stale-architecture-drift-helper",
+          "action": "remove",
+          "risk": "low",
+          "ownership": "known_generated",
+          "paths": [
+            "assets/templates/helpers/architecture-drift.sh"
+          ],
+          "summary": "Remove the retired architecture-drift helper after architecture-queue.sh absorbs request, card, index, and gate ownership."
+        },
+        {
           "id": "custom-claude-hooks-preserve",
           "signal": "custom-claude-hooks",
           "action": "preserve",
@@ -441,6 +574,20 @@
             "_ops/"
           ],
           "summary": "Never migrate, delete, or vendor ignored external references, local CodeGraph indexes, private operations state, secrets, or local environment values."
+        },
+        {
+          "id": "legacy-tasks-research-notes",
+          "signal": "legacy-tasks-research-notes",
+          "action": "archive",
+          "risk": "medium",
+          "ownership": "user_authored",
+          "paths": [
+            "tasks/research.md"
+          ],
+          "targetPaths": [
+            "docs/researches/legacy-research-notes.md"
+          ],
+          "summary": "Archive legacy singleton research notes into the docs/researches report surface and leave a tombstone pointer."
         }
       ]
     }

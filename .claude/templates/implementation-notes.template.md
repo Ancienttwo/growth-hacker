@@ -33,5 +33,5 @@
 ## Promotion Candidates
 
 - Promote to `tasks/lessons.md` only after a repeated correction or failure pattern.
-- Promote to `tasks/research.md` only when it is durable repo knowledge with evidence.
+- Promote to `docs/researches/` only when it is durable repo knowledge with evidence.
 - Promote to harness asset files only after verification across more than one task or fixture.

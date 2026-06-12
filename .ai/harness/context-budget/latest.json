@@ -1,0 +1,26 @@
+{
+  "cwd": "/Users/kito/Projects/growth-hacker",
+  "codexHome": "/Users/kito/.codex",
+  "sessionId": "",
+  "threadId": "019eaff8-1fe9-72f1-8951-ee1b4936b15b",
+  "model": "gpt-5.5",
+  "reasoningEffort": "xhigh",
+  "source": "rollout-token-count",
+  "zone": "green",
+  "usageTokens": 77906,
+  "contextWindow": 258400,
+  "usedPercent": 0.3014938080495356,
+  "remainingPercent": 0.6985061919504644,
+  "estimated": false,
+  "rolloutPath": "/Users/kito/.codex/sessions/2026/06/10/rollout-2026-06-10T13-18-54-019eaff8-1fe9-72f1-8951-ee1b4936b15b.jsonl",
+  "statusFile": "/Users/kito/Projects/growth-hacker/.ai/harness/context-budget/latest.json",
+  "message": "context green zone",
+  "handoffRecommended": false,
+  "stopRecommended": false,
+  "thresholds": {
+    "yellow": 0.55,
+    "orange": 0.7,
+    "red": 0.8
+  },
+  "generatedAt": "2026-06-10T06:12:15.620Z"
+}

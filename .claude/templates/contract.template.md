@@ -20,13 +20,13 @@ Describe the exact outcome this task must deliver.
 ## Workflow Inventory
 
 - Source plan: `{{PLAN_FILE}}`
-- Deferred-goal ledger: `tasks/todo.md`
+- Deferred-goal ledger: `tasks/todos.md`
 - Review file: `{{REVIEW_FILE}}`
 - Notes file: `{{NOTES_FILE}}`
 - Checks file: `.ai/harness/checks/latest.json`
 - Run snapshots: `.ai/harness/runs/`
 - Scope gate: edit only paths listed under `allowed_paths`; update this contract before widening scope.
-- Completion gate: `scripts/verify-sprint.sh` must see this contract pass, the review recommend pass, and `## External Acceptance Advice` pass or record a manual override.
+- Completion gate: `.ai/harness/scripts/verify-sprint.sh` must see this contract pass, the review recommend pass, and `## External Acceptance Advice` pass or record a manual override.
 
 ## Allowed Paths
 
@@ -34,13 +34,31 @@ Describe the exact outcome this task must deliver.
 allowed_paths:
   - docs/spec.md
   - plans/
-  - tasks/todo.md
+  - tasks/todos.md
   - {{CONTRACT_FILE}}
   - {{REVIEW_FILE}}
   - {{NOTES_FILE}}
   - .ai/context/capabilities.json
   - src/
   - tests/
+```
+
+## Delegation Contract
+
+```yaml
+delegation:
+  budget:
+    tokens: null
+    tool_calls: null
+    wall_time_minutes: null
+  permission_scope:
+    mode: inherit_allowed_paths
+    writable_paths: []
+    network: inherited
+  roles:
+    parent: narrate_and_gatekeep
+    worker: implement_contract
+    verifier: review_exit_criteria
 ```
 
 ## Exit Criteria (Machine Verifiable)

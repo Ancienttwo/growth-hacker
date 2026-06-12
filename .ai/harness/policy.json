@@ -10,14 +10,39 @@
     "source_of_truth": "latest non-archived plan or explicit marker"
   },
   "tasks": {
-    "todo_file": "tasks/todo.md",
+    "todo_file": "tasks/todos.md",
     "current_status_file": "tasks/current.md",
     "lessons_file": "tasks/lessons.md",
-    "research_file": "tasks/research.md",
+    "research_dir": "docs/researches",
     "workstreams_dir": "tasks/workstreams",
     "contracts_dir": "tasks/contracts",
     "reviews_dir": "tasks/reviews",
-    "notes_dir": "tasks/notes"
+    "notes_dir": "tasks/notes",
+    "research_file": "tasks/research.md"
+  },
+  "prds": {
+    "dir": "plans/prds",
+    "template_file": ".claude/templates/prd.template.md",
+    "statuses": [
+      "Draft",
+      "Approved",
+      "Superseded"
+    ],
+    "rule": "PRDs live in plans/prds as the upper planning layer. They decompose docs/spec.md intent into product direction, acceptance scenarios, module behavior, data model, performance targets, and developer handoff. Sprints reference PRDs through Source PRD and decompose them into ordered execution backlogs."
+  },
+  "sprints": {
+    "dir": "plans/sprints",
+    "active_marker_file": ".ai/harness/sprint/active-sprint",
+    "template_file": ".claude/templates/sprint.template.md",
+    "helper_script": ".ai/harness/scripts/sprint-backlog.sh",
+    "statuses": [
+      "Draft",
+      "Approved",
+      "Executing",
+      "Done",
+      "Archived"
+    ],
+    "rule": "PRDs live in plans/prds as the upper planning layer. Sprints live in plans/sprints as long-task execution backlogs; each sprint row is expanded with Waza $think into a detailed plans/plan-*.md before the plan -> contract -> worktree flow; tasks/todos.md stays the deferred-goal ledger"
   },
   "reference_material": {
     "dir": "_ref",
@@ -54,8 +79,8 @@
       "script": "scripts/select-agent-context-blocks.sh",
       "config_file": ".ai/context/agent-context-blocks.txt",
       "env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
-      "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS",
-      "rule": "compatibility selector; capability registry is the source of truth"
+      "rule": "compatibility selector; capability registry is the source of truth",
+      "legacy_env": "PROJECT_INITIALIZER_CONTEXT_BLOCKS"
     }
   },
   "harness": {
@@ -65,7 +90,10 @@
     "failure_log_file": ".ai/harness/failures/latest.jsonl",
     "events_file": ".ai/harness/events.jsonl",
     "architecture_events_file": ".ai/harness/architecture/events.jsonl",
-    "runs_dir": ".ai/harness/runs"
+    "runs_dir": ".ai/harness/runs",
+    "helper_runtime_dir": ".ai/harness/scripts",
+    "helper_compat_dir": "scripts",
+    "helper_source": "isolated-installed-copy"
   },
   "architecture": {
     "index_file": "docs/architecture/index.md",
@@ -77,6 +105,12 @@
     "diagram_skill": "diagram-design",
     "diagram_skill_source": "~/.codex/skills/diagram-design",
     "vendoring_policy": "do-not-vendor-diagram-skill-assets",
+    "freshness_gate": "advisory",
+    "gate_min_severity": "medium",
+    "pending_card_scope": "capability",
+    "pending_block_begin": "<!-- BEGIN ARCHITECTURE PENDING REQUESTS -->",
+    "pending_block_end": "<!-- END ARCHITECTURE PENDING REQUESTS -->",
+    "queue_script": ".ai/harness/scripts/architecture-queue.sh",
     "contract_block_begin": "<!-- BEGIN ARCHITECTURE CONTRACT -->",
     "contract_block_end": "<!-- END ARCHITECTURE CONTRACT -->",
     "rule": "hooks record drift and sync controlled local context blocks; agents author semantic snapshots and diagrams"
@@ -128,28 +162,6 @@
       "sync_rule": "only explicitly opted-in repo-to-brain manifest entries may be written to the default brain vault; pointer-only externalized stubs remain check-only"
     }
   },
-  "context_budget": {
-    "status_file": ".ai/harness/context-budget/latest.json",
-    "source_priority": [
-      "rollout_token_count",
-      "state_thread",
-      "tool_call_count"
-    ],
-    "zones": {
-      "yellow": 0.55,
-      "orange": 0.7,
-      "red": 0.8
-    },
-    "fallback_model_windows": {
-      "gpt-5.4": 1050000,
-      "gpt-5.5": 258000
-    },
-    "fallback_tool_calls": {
-      "yellow": 30,
-      "orange": 40,
-      "red": 50
-    }
-  },
   "handoff_resume": {
     "resume_packet_file": ".ai/harness/handoff/resume.md",
     "global_handoff_dir": "~/.codex/handoffs",
@@ -168,9 +180,18 @@
     "pending_orchestration_file": ".ai/harness/planning/pending.json",
     "source_of_truth": "transient host planning bridge only; plans/ and .ai/harness/active-plan remain authoritative"
   },
+  "guards": {
+    "edit_plan_gate": "enforce",
+    "edit_plan_gate_modes": [
+      "enforce",
+      "advice",
+      "off"
+    ],
+    "rule": "pre-edit-guard blocks implementation edits (non-workflow paths) unless an active plan is Approved/Executing; prompt-layer plan gates are advisory routing only"
+  },
   "sidecar_research": {
     "default": true,
-    "output_file": "tasks/research.md",
+    "output_dir": "docs/researches",
     "preferred_runners": [
       "subagent",
       "codex exec --json",
@@ -178,10 +199,14 @@
     ],
     "spawn_decision": "main agent decides from task breadth, context impact, raw-log volume, and callable runner availability; do not ask the user for spawn confirmation",
     "fallback_runner": "main-thread trace",
-    "main_thread_policy": "if spawning is not worthwhile or no sidecar runner is callable, perform bounded research in the main thread; consume conclusions and evidence paths, not raw logs"
+    "main_thread_policy": "if spawning is not worthwhile or no sidecar runner is callable, perform bounded research in the main thread; consume conclusions and evidence paths, not raw logs",
+    "output_file": "tasks/research.md"
   },
   "documentation": {
     "profile": "minimal-agentic",
+    "reference_source": "user-level-runtime-docs",
+    "reference_stub_marker": "<!-- repo-harness: reference-config-stub v1 -->",
+    "reference_resolver": "repo-harness docs path <doc-id>",
     "required": [
       "docs/spec.md",
       "docs/architecture/index.md"
@@ -200,7 +225,8 @@
       "sprint-contracts.md",
       "handoff-protocol.md",
       "document-generation.md",
-      "global-working-rules.md"
+      "global-working-rules.md",
+      "heartbeat-triage.md"
     ],
     "rule": "create optional docs only when the agent has concrete repo evidence or the user asks"
   },
@@ -367,5 +393,27 @@
     "worktree_guard": "warn-by-default",
     "verification_gate": "contract-and-review",
     "completion_requires_checks": true
+  },
+  "context_budget": {
+    "status_file": ".ai/harness/context-budget/latest.json",
+    "source_priority": [
+      "rollout_token_count",
+      "state_thread",
+      "tool_call_count"
+    ],
+    "zones": {
+      "yellow": 0.55,
+      "orange": 0.7,
+      "red": 0.8
+    },
+    "fallback_model_windows": {
+      "gpt-5.4": 1050000,
+      "gpt-5.5": 258000
+    },
+    "fallback_tool_calls": {
+      "yellow": 30,
+      "orange": 40,
+      "red": 50
+    }
   }
 }
