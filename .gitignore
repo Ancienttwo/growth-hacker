@@ -18,6 +18,9 @@ artifacts/
 # External references
 # Local operations state
 _ops/
+# Delivery packs stay compressed; unpacked copies contain package.json/tsconfig
+# and should not participate in editor, test, or package discovery.
+plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/
 # Environment
 .env.*
 !.env.example
@@ -62,8 +65,6 @@ tasks/.current.md.tmp.*
 .ai/harness/chatgpt/sessions/
 .ai/harness/triage/*
 !.ai/harness/triage/.gitkeep
-.ai/harness/scripts/*
-!.ai/harness/scripts/.gitkeep
 .repo-harness/chatgpt-browser.local.json
 .repo-harness/chatgpt-browser.tokens.json
 .codex/*

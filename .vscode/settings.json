@@ -1,0 +1,28 @@
+{
+  "files.exclude": {
+    "plans/prds/video-agent-pack/growth-hacker-video-agent-refactor": true
+  },
+  "files.watcherExclude": {
+    "**/plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/**": true,
+    "**/_ref/**": true
+  },
+  "search.exclude": {
+    "plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/**": true,
+    "_ref/**": true
+  },
+  "git.ignoredRepositories": [
+    "plans/prds/video-agent-pack/growth-hacker-video-agent-refactor",
+    "_ref/CLI-Anything"
+  ],
+  "git.repositoryScanIgnoredFolders": [
+    "node_modules",
+    "_ref",
+    "plans/prds/video-agent-pack/growth-hacker-video-agent-refactor"
+  ],
+  "typescript.tsserver.watchOptions": {
+    "excludeDirectories": [
+      "**/plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/**",
+      "**/_ref/**"
+    ]
+  }
+}
