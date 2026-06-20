@@ -62,6 +62,8 @@ tasks/.current.md.tmp.*
 .ai/harness/chatgpt/sessions/
 .ai/harness/triage/*
 !.ai/harness/triage/.gitkeep
+.ai/harness/scripts/*
+!.ai/harness/scripts/.gitkeep
 .repo-harness/chatgpt-browser.local.json
 .repo-harness/chatgpt-browser.tokens.json
 .codex/*
