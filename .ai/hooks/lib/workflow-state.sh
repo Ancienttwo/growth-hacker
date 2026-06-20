@@ -70,6 +70,149 @@ workflow_repo_relative_path() {
   esac
 }
 
+workflow_context_latest_file() {
+  workflow_repo_relative_path "$(workflow_policy_get '.context_audit.latest_file' '.ai/harness/context-health/latest.json')" '.ai/harness/context-health/latest.json' '.ai/harness/'
+}
+
+workflow_context_dirty_file() {
+  workflow_repo_relative_path "$(workflow_policy_get '.context_audit.dirty_file' '.ai/harness/context-health/dirty.json')" '.ai/harness/context-health/dirty.json' '.ai/harness/'
+}
+
+workflow_context_session_rendered_file() {
+  workflow_repo_relative_path "$(workflow_policy_get '.context_audit.session_rendered_file' '.ai/harness/context-health/session-start.rendered')" '.ai/harness/context-health/session-start.rendered' '.ai/harness/'
+}
+
+workflow_context_stop_rendered_file() {
+  workflow_repo_relative_path "$(workflow_policy_get '.context_audit.stop_rendered_file' '.ai/harness/context-health/stop.rendered')" '.ai/harness/context-health/stop.rendered' '.ai/harness/'
+}
+
+workflow_context_dirty_reason() {
+  case "$1" in
+    AGENTS.md|CLAUDE.md|WARP.md|CONTRIBUTING.md|.github/copilot-instructions.md)
+      printf '%s' "top_level_router_changed"
+      ;;
+    .agents/skills/*/SKILL.md|.codex/skills/*/SKILL.md)
+      printf '%s' "agent_skill_changed"
+      ;;
+    .ai/context/*)
+      printf '%s' "context_routing_changed"
+      ;;
+    .ai/hooks/*|assets/hooks/*)
+      printf '%s' "hook_runtime_changed"
+      ;;
+    .ai/harness/policy.json|.ai/harness/workflow-contract.json|assets/workflow-contract.v1.json)
+      printf '%s' "harness_policy_changed"
+      ;;
+    package.json|bun.lock|bun.lockb|Makefile|pyproject.toml|Cargo.toml|go.mod)
+      printf '%s' "command_source_changed"
+      ;;
+    .github/workflows/*)
+      printf '%s' "ci_workflow_changed"
+      ;;
+    docs/spec.md|docs/reference-configs/*|specs/*/PRODUCT.md|specs/*/TECH.md|tasks/workstreams/*)
+      printf '%s' "context_source_changed"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+workflow_context_is_high_context_path() {
+  workflow_context_dirty_reason "$1" >/dev/null 2>&1
+}
+
+workflow_context_mark_dirty() {
+  local path="$1" reason dirty_file dirty_dir tmp now escaped_path escaped_reason
+
+  reason="$(workflow_context_dirty_reason "$path" 2>/dev/null || true)"
+  [[ -n "$reason" ]] || return 0
+
+  dirty_file="$(workflow_context_dirty_file)"
+  dirty_dir="$(dirname "$dirty_file")"
+  mkdir -p "$dirty_dir" 2>/dev/null || return 0
+
+  if command -v node >/dev/null 2>&1 || command -v bun >/dev/null 2>&1; then
+    local js='
+const fs = require("fs");
+const path = require("path");
+const file = process.env.CONTEXT_DIRTY_FILE;
+const changedPath = process.env.CONTEXT_CHANGED_PATH;
+const reason = process.env.CONTEXT_DIRTY_REASON;
+let current = {};
+try {
+  current = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch {}
+const existing = Array.isArray(current.triggers) ? current.triggers : [];
+const seen = new Set();
+const triggers = [];
+for (const trigger of existing) {
+  if (!trigger || typeof trigger.path !== "string" || typeof trigger.reason !== "string") continue;
+  const key = `${trigger.path}\u0000${trigger.reason}`;
+  if (seen.has(key)) continue;
+  seen.add(key);
+  triggers.push({ path: trigger.path, reason: trigger.reason });
+}
+const key = `${changedPath}\u0000${reason}`;
+if (!seen.has(key)) triggers.push({ path: changedPath, reason });
+const next = {
+  schema_version: 1,
+  status: "dirty",
+  updated_at: new Date().toISOString(),
+  triggers,
+};
+if (typeof current.audit_head_sha === "string" && current.audit_head_sha) next.audit_head_sha = current.audit_head_sha;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+fs.renameSync(tmp, file);
+'
+    if command -v node >/dev/null 2>&1; then
+      CONTEXT_DIRTY_FILE="$dirty_file" CONTEXT_CHANGED_PATH="$path" CONTEXT_DIRTY_REASON="$reason" node -e "$js" >/dev/null 2>&1 && return 0
+    else
+      CONTEXT_DIRTY_FILE="$dirty_file" CONTEXT_CHANGED_PATH="$path" CONTEXT_DIRTY_REASON="$reason" bun -e "$js" >/dev/null 2>&1 && return 0
+    fi
+  fi
+
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || date)"
+  escaped_path="$(workflow_json_escape "$path")"
+  escaped_reason="$(workflow_json_escape "$reason")"
+  tmp="${dirty_file}.$$.$RANDOM.tmp"
+  cat > "$tmp" <<EOF_CONTEXT_DIRTY
+{
+  "schema_version": 1,
+  "status": "dirty",
+  "updated_at": "$(workflow_json_escape "$now")",
+  "triggers": [
+    {
+      "path": "$escaped_path",
+      "reason": "$escaped_reason"
+    }
+  ]
+}
+EOF_CONTEXT_DIRTY
+  mv "$tmp" "$dirty_file" 2>/dev/null || rm -f "$tmp"
+}
+
+workflow_context_status_json() {
+  if [[ -n "${REPO_HARNESS_CLI:-}" && -f "${REPO_HARNESS_CLI:-}" ]] && command -v bun >/dev/null 2>&1; then
+    bun "$REPO_HARNESS_CLI" context status --json
+    return $?
+  fi
+
+  if command -v repo-harness >/dev/null 2>&1; then
+    repo-harness context status --json
+    return $?
+  fi
+
+  if command -v bun >/dev/null 2>&1 && [[ -f "src/cli/index.ts" ]]; then
+    bun src/cli/index.ts context status --json
+    return $?
+  fi
+
+  return 1
+}
+
 workflow_context_map_file() {
   workflow_repo_relative_path "$(workflow_policy_get '.context.map_file' '.ai/context/context-map.json')" '.ai/context/context-map.json' '.ai/context/'
 }

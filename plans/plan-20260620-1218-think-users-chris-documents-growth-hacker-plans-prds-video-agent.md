@@ -221,6 +221,15 @@ Failure reporting:
 - [x] Run an isolated scheduler-off CLI smoke proving `requestedProvider`, `requestedModel`, and step `maxAttempts` are persisted without touching Hermes.
 - [x] Run focused growthctl typecheck.
 
+### Phase 7 - growthctl Flagged Live Hermes Smoke
+- [x] Confirm local Hermes gateway and `xai-oauth` auth are available.
+- [x] Start an isolated scheduler-enabled server using a temp `growthRoot`.
+- [x] Create a project through `growthctl`.
+- [x] Start preproduction through `growthctl video workflow start` with `--provider xai-oauth --model grok-4.3 --max-attempts 1`.
+- [x] Observe the workflow reach `waiting_approval` with all preproduction stages completed.
+- [x] Export the completed package through `growthctl video package export`.
+- [x] Stop before approval, paid render, upload, or public publish, then close the server.
+
 ## Tests And Evidence
 
 Required gates:
