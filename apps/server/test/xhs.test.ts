@@ -6,13 +6,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { JobSnapshot } from "@growth-hacker/core";
 
 import { JobStore } from "../src/jobs";
-import { getXhsAuthStatus, startXhsLogin } from "../src/xhs";
+import { getXhsAuthStatus, invalidateXhsAuthStatusCache, startXhsLogin } from "../src/xhs";
 
 const originalEnv = {
   FAKE_XHS_LOGIN_FAIL: process.env.FAKE_XHS_LOGIN_FAIL,
   FAKE_XHS_STATUS: process.env.FAKE_XHS_STATUS,
   FAKE_XHS_WRITE_COOKIE: process.env.FAKE_XHS_WRITE_COOKIE,
   FAKE_XHS_WHOAMI: process.env.FAKE_XHS_WHOAMI,
+  GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS: process.env.GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS,
   PATH: process.env.PATH,
   XHS_AUTH_CHECK_ATTEMPTS: process.env.XHS_AUTH_CHECK_ATTEMPTS,
   XHS_AUTH_CHECK_INTERVAL_MS: process.env.XHS_AUTH_CHECK_INTERVAL_MS,
@@ -24,10 +25,12 @@ afterEach(() => {
   restoreEnv("FAKE_XHS_STATUS", originalEnv.FAKE_XHS_STATUS);
   restoreEnv("FAKE_XHS_WRITE_COOKIE", originalEnv.FAKE_XHS_WRITE_COOKIE);
   restoreEnv("FAKE_XHS_WHOAMI", originalEnv.FAKE_XHS_WHOAMI);
+  restoreEnv("GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS", originalEnv.GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS);
   restoreEnv("PATH", originalEnv.PATH);
   restoreEnv("XHS_AUTH_CHECK_ATTEMPTS", originalEnv.XHS_AUTH_CHECK_ATTEMPTS);
   restoreEnv("XHS_AUTH_CHECK_INTERVAL_MS", originalEnv.XHS_AUTH_CHECK_INTERVAL_MS);
   restoreEnv("XHS_AUTH_COOKIE_PATH", originalEnv.XHS_AUTH_COOKIE_PATH);
+  invalidateXhsAuthStatusCache();
 });
 
 describe("XHS global auth", () => {
@@ -117,6 +120,26 @@ describe("XHS global auth", () => {
     expect(readFileSync(cookiePath, "utf8")).toBe("previous-valid-cookie");
     expect(finished.logs.join("\n")).toContain("browser cookie import unavailable; existing global XHS auth verified: Real User");
   });
+
+  test("degrades status checks quickly when the xhs CLI is slow", async () => {
+    installFakeXhs();
+    process.env.FAKE_XHS_STATUS = "slow";
+    process.env.GROWTH_HACKER_XHS_STATUS_COMMAND_TIMEOUT_MS = "50";
+    invalidateXhsAuthStatusCache();
+
+    const startedAt = performance.now();
+    const auth = await getXhsAuthStatus();
+
+    expect(auth).toMatchObject({
+      installed: true,
+      authenticated: false,
+      scope: "global",
+      state: "invalid",
+      errorCode: "status_timeout"
+    });
+    expect(auth.message).toContain("timed out after 50ms");
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+  });
 });
 
 function installFakeXhs() {
@@ -139,6 +162,11 @@ case "$cmd" in
     echo '{"ok":true,"schema_version":"1","data":{"authenticated":true}}'
     ;;
   status)
+    if [[ "\${FAKE_XHS_STATUS:-guest}" == "slow" ]]; then
+      sleep 1
+      echo '{"ok":true,"schema_version":"1","data":{"authenticated":true,"user":{"guest":false,"nickname":"Late User","red_id":"late_user"}}}'
+      exit 0
+    fi
     if [[ "\${FAKE_XHS_STATUS:-guest}" == "real" ]]; then
       echo '{"ok":true,"schema_version":"1","data":{"authenticated":true,"user":{"guest":false,"nickname":"Real User","red_id":"real_user"}}}'
     else

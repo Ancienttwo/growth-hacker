@@ -28,6 +28,7 @@ import {
   streamHermesRunEvents
 } from "./hermesChat";
 import { readHermesContextSnapshot } from "./hermesContext";
+import { listHermesProfileConfig, startHermesPlatformProfileBootstrap, updatePlatformHermesProfile } from "./hermesProfiles";
 import { JobStore } from "./jobs";
 import { planXiaohongshuLegacyMigration, runXiaohongshuLegacyMigration } from "./migration";
 import { listHermesProfileSkills, updateHermesProfileSkill } from "./hermesSkills";
@@ -196,6 +197,25 @@ export function createApp() {
       );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "read_hermes_context_failed" }, 400);
+    }
+  });
+
+  app.get("/api/hermes/profile-config", (c) => c.json(listHermesProfileConfig(config)));
+
+  app.patch("/api/hermes/profile-config/platforms/:platform", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+      return c.json({ profile: updatePlatformHermesProfile(config, c.req.param("platform"), body) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "update_hermes_profile_config_failed" }, 400);
+    }
+  });
+
+  app.post("/api/hermes/profile-config/bootstrap", async (c) => {
+    try {
+      return c.json(await startHermesPlatformProfileBootstrap(config, jobs), 202);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "bootstrap_hermes_profiles_failed" }, 400);
     }
   });
 

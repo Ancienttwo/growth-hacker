@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AppConfig } from "./config";
 import type { JobStore } from "./jobs";
 import { commandExists, runCommand } from "./shell";
+import { invalidateStatusCache, readThroughStatusCache } from "./statusCache";
 
 export interface HermesVideoAuthStatus {
   installed: boolean;
@@ -22,8 +23,21 @@ const VIDEO_PROVIDER = "xai";
 const VIDEO_MODEL = "grok-imagine-video";
 const AUTH_NAME = "xai-oauth";
 const VIDEO_PLUGIN = "video_gen/xai";
+const STATUS_CACHE_TTL_MS = 5000;
+const STATUS_COMMAND_TIMEOUT_MS = 4500;
+const STATUS_COMMAND_KILL_GRACE_MS = 500;
+const videoAuthStatusCache = new Map<string, { expiresAt: number; inFlight?: Promise<HermesVideoAuthStatus>; value?: HermesVideoAuthStatus }>();
 
 export async function getHermesVideoAuthStatus(config: AppConfig): Promise<HermesVideoAuthStatus> {
+  return readThroughStatusCache(videoAuthStatusCache, videoAuthStatusCacheKey(config), STATUS_CACHE_TTL_MS, () => readHermesVideoAuthStatus(config));
+}
+
+export function invalidateHermesVideoAuthStatus(config?: AppConfig): void {
+  if (config) invalidateStatusCache(videoAuthStatusCache, videoAuthStatusCacheKey(config));
+  else invalidateStatusCache(videoAuthStatusCache);
+}
+
+async function readHermesVideoAuthStatus(config: AppConfig): Promise<HermesVideoAuthStatus> {
   const hermes = await resolveHermesCli();
   if (!hermes) {
     return {
@@ -38,10 +52,11 @@ export async function getHermesVideoAuthStatus(config: AppConfig): Promise<Herme
 
   const env = hermesEnv(config);
   const [auth, tools, plugins] = await Promise.all([
-    runCommand(hermes, ["auth", "status", AUTH_NAME], { env, timeoutMs: 10000 }),
-    runCommand(hermes, ["tools", "list", "--platform", "api_server"], { env, timeoutMs: 10000 }),
-    runCommand(hermes, ["plugins", "list"], { env, timeoutMs: 15000 })
+    runStatusCommand(hermes, ["auth", "status", AUTH_NAME], env),
+    runStatusCommand(hermes, ["tools", "list", "--platform", "api_server"], env),
+    runStatusCommand(hermes, ["plugins", "list"], env)
   ]);
+  const timedOut = auth.timedOut || tools.timedOut || plugins.timedOut;
   const videoConfig = readVideoConfig(config);
   const authenticated = isAuthLoggedIn(auth.stdout || auth.stderr);
   const pluginEnabled = isPluginEnabled(plugins.stdout || plugins.stderr) || videoConfig.plugins.includes(VIDEO_PLUGIN);
@@ -59,11 +74,16 @@ export async function getHermesVideoAuthStatus(config: AppConfig): Promise<Herme
     provider,
     model,
     command: hermes,
-    message: configured ? undefined : videoAuthStatusMessage({ authenticated, pluginEnabled, apiServerToolEnabled, provider, model })
+    message: timedOut
+      ? "Hermes video auth status check timed out; retry after the CLI is responsive."
+      : configured
+        ? undefined
+        : videoAuthStatusMessage({ authenticated, pluginEnabled, apiServerToolEnabled, provider, model })
   };
 }
 
 export async function startHermesVideoAuth(config: AppConfig, jobs: JobStore, force = false) {
+  invalidateHermesVideoAuthStatus(config);
   const hermes = await resolveHermesCli();
   return jobs.startTask("hermes-video-auth", ["hermes", "video", "auth", "xai"], async (log) => {
     if (!hermes) throw new Error("Hermes CLI not found on PATH.");
@@ -95,6 +115,7 @@ export async function startHermesVideoAuth(config: AppConfig, jobs: JobStore, fo
       throw new Error(`${AUTH_NAME}: auth did not complete`);
     }
     log(`${AUTH_NAME}: logged in`);
+    invalidateHermesVideoAuthStatus(config);
   });
 }
 
@@ -127,6 +148,23 @@ async function resolveHermesCli(): Promise<string | undefined> {
 
 function hermesEnv(config: AppConfig): NodeJS.ProcessEnv {
   return { HERMES_HOME: config.hermesHome };
+}
+
+function runStatusCommand(command: string, args: string[], env: NodeJS.ProcessEnv) {
+  return runCommand(command, args, {
+    env,
+    timeoutMs: statusCommandTimeoutMs(),
+    timeoutKillGraceMs: STATUS_COMMAND_KILL_GRACE_MS
+  });
+}
+
+function statusCommandTimeoutMs(): number {
+  const override = Number(process.env.GROWTH_HACKER_STATUS_COMMAND_TIMEOUT_MS);
+  return Number.isInteger(override) && override > 0 ? override : STATUS_COMMAND_TIMEOUT_MS;
+}
+
+function videoAuthStatusCacheKey(config: AppConfig): string {
+  return [config.hermesHome, config.defaultHermesProfile].join("|");
 }
 
 function isAuthLoggedIn(output: string): boolean {

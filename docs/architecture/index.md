@@ -4,7 +4,7 @@
 
 ## Current Snapshot
 
-- Latest snapshot: (none yet)
+- Latest snapshot: `snapshots/snapshot-20260610-system-overview.md` (2026-06-10 system overview + assessment + refactor proposals)
 - Latest diagram: (none yet)
 
 ## Architecture Drift Flow

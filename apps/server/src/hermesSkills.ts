@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import type { HermesSkillInfo } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { assertAllowedHermesAgent } from "./hermesProfiles";
 
 interface ProfileSkillConfig {
   path: string;
@@ -16,11 +17,12 @@ export function listHermesProfileSkills(config: AppConfig, agentId: string): Her
   const profileConfig = readProfileSkillConfig(config, agentId);
   const skillsConfig = recordValue(profileConfig.data.skills);
   const disabled = normalizeStringSet(skillsConfig.disabled);
-  return skillRoots(config, agentId, profileConfig)
+  const skills = skillRoots(config, agentId, profileConfig)
     .flatMap((root) => {
       if (!existsSync(root)) return [];
       return findSkillFiles(root).map((path) => skillInfoFromFile(root, path, disabled));
-    })
+    });
+  return uniqueHermesSkillsByName(skills)
     .sort(sortHermesSkills);
 }
 
@@ -51,9 +53,7 @@ export function updateHermesProfileSkill(config: AppConfig, agentId: string, ski
 }
 
 function assertAllowedAgent(config: AppConfig, agentId: string): void {
-  if (!config.socialAgents.some((agent) => agent.id === agentId)) {
-    throw new Error(`agent_not_allowed:${agentId}`);
-  }
+  assertAllowedHermesAgent(config, agentId);
   if (!/^[a-zA-Z0-9_.:-]+$/.test(agentId)) {
     throw new Error(`invalid_agent_id:${agentId}`);
   }
@@ -77,7 +77,11 @@ function readProfileSkillConfig(config: AppConfig, agentId: string): ProfileSkil
 
 function skillRoots(config: AppConfig, agentId: string, profileConfig: ProfileSkillConfig): string[] {
   const skillsConfig = recordValue(profileConfig.data.skills);
-  const roots = [profileSkillsRoot(config, agentId), ...normalizeStringList(skillsConfig.external_dirs).map(expandHomePath)];
+  const roots = [
+    profileSkillsRoot(config, agentId),
+    ...normalizeStringList(skillsConfig.external_dirs).map(expandHomePath),
+    ...(config.bundledHermesSkillsRoot ? [config.bundledHermesSkillsRoot] : [])
+  ];
   const seen = new Set<string>();
   return roots
     .map((root) => resolve(root))
@@ -86,6 +90,15 @@ function skillRoots(config: AppConfig, agentId: string, profileConfig: ProfileSk
       seen.add(root);
       return true;
     });
+}
+
+function uniqueHermesSkillsByName(skills: HermesSkillInfo[]): HermesSkillInfo[] {
+  const byName = new Map<string, HermesSkillInfo>();
+  for (const skill of skills) {
+    const key = skill.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, skill);
+  }
+  return [...byName.values()];
 }
 
 function findSkillFiles(root: string): string[] {

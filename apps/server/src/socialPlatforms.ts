@@ -11,6 +11,7 @@ import {
 } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { resolvePlatformHermesAgent } from "./hermesProfiles";
 import { commandExists } from "./shell";
 import { profileRoot, safeStat, xhsDocumentRoot } from "./workspace";
 import { getXhsAuthStatus } from "./xhs";
@@ -161,12 +162,11 @@ async function defaultCliStatus(adapter: SocialPlatformAdapter): Promise<SocialP
 }
 
 async function xiaohongshuCliStatus(): Promise<SocialPlatformInfo["cli"]> {
-  const path = await commandExists("xhs");
-  const auth = await getXhsAuthStatus();
+  const [path, auth] = await Promise.all([commandExists("xhs"), getXhsAuthStatus()]);
   return {
     command: "xhs",
     path,
-    state: auth.installed ? "available" : "missing",
+    state: auth.installed ? (auth.errorCode === "status_timeout" ? "degraded" : "available") : "missing",
     authenticated: auth.authenticated,
     authState: auth.state,
     message: auth.message
@@ -175,7 +175,7 @@ async function xiaohongshuCliStatus(): Promise<SocialPlatformInfo["cli"]> {
 
 function buildXiaohongshuTaskCommand(config: AppConfig, input: BuildSocialTaskCommandInput): SocialTaskCommand {
   const profile = input.profile;
-  const agentId = input.agentId ?? config.defaultHermesProfile;
+  const agentId = input.agentId ?? resolvePlatformHermesAgent(config, input.platform).id;
   const root = profileRoot(config, XIAOHONGSHU_PLATFORM, profile);
   if (!safeStat(root)?.isDirectory()) throw new Error(`profile_not_found:${XIAOHONGSHU_PLATFORM}/${profile}`);
   const documentRoot = xhsDocumentRoot(config, profile);

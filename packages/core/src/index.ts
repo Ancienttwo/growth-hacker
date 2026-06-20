@@ -235,6 +235,24 @@ export interface SocialAgent {
   runner: AgentRunnerKind;
 }
 
+export interface PlatformHermesProfile {
+  platform: PlatformId;
+  agentId: string;
+  runner: AgentRunnerKind;
+  profilePath: string;
+  profileExists: boolean;
+  source: "default" | "stored";
+  updatedAt?: string;
+}
+
+export interface HermesProfileConfig {
+  schemaVersion: 1;
+  defaultAgentId: string;
+  profiles: PlatformHermesProfile[];
+  agents: SocialAgent[];
+  configPath: string;
+}
+
 export interface DashboardChatSession {
   id: string;
   title: string;

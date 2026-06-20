@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { HermesLlmSelection, JobSnapshot, SocialBoardTask, SocialBoardTaskStatus, SocialCronTaskType } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { listConfiguredSocialAgents, resolvePlatformHermesAgent } from "./hermesProfiles";
 import { listHermesSocialCronRunTasks } from "./hermesCron";
 import type { JobStore } from "./jobs";
 import { buildSocialTaskCommand } from "./socialTaskCommands";
@@ -36,7 +37,7 @@ export interface UpdateSocialBoardTaskInput {
 }
 
 export function listSocialAgents(config: AppConfig) {
-  return config.socialAgents;
+  return listConfiguredSocialAgents(config);
 }
 
 export function listSocialBoardTasks(config: AppConfig): SocialBoardTask[] {
@@ -44,7 +45,7 @@ export function listSocialBoardTasks(config: AppConfig): SocialBoardTask[] {
 }
 
 export function createSocialBoardTask(config: AppConfig, input: CreateSocialBoardTaskInput): SocialBoardTask {
-  const agentId = input.agentId?.trim() || config.defaultHermesProfile;
+  const agentId = input.agentId?.trim() || resolvePlatformHermesAgent(config, input.platform).id;
   const runner = resolveAgentRunner(config, agentId);
   const now = new Date().toISOString();
   const task: SocialBoardTask = {

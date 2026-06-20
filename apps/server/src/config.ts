@@ -14,6 +14,7 @@ export interface AppConfig {
   defaultHermesProfile: string;
   socialAgents: SocialAgent[];
   socialCronAgents: string[];
+  bundledHermesSkillsRoot?: string;
   bundledXiaohongshuSkillRoot: string;
   legacyXiaohongshuRoot: string;
   port: number;
@@ -27,6 +28,7 @@ interface RawConfig {
   defaultHermesProfile?: string;
   socialAgents?: Array<string | { id: string; runner?: AgentRunnerKind }>;
   socialCronAgents?: string[];
+  bundledHermesSkillsRoot?: string;
   bundledXiaohongshuSkillRoot?: string;
   legacyXiaohongshuRoot?: string;
   port?: number;
@@ -68,6 +70,7 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     defaultHermesProfile,
     socialAgents,
     socialCronAgents: socialAgents.map((agent) => agent.id),
+    bundledHermesSkillsRoot: raw.bundledHermesSkillsRoot ? expandHome(raw.bundledHermesSkillsRoot) : resolve(repoRoot, "skills"),
     bundledXiaohongshuSkillRoot: bundledRoot,
     legacyXiaohongshuRoot: expandHome(raw.legacyXiaohongshuRoot ?? "~/.xiaohongshu/client"),
     port: Number(process.env.PORT ?? raw.port ?? 8787)

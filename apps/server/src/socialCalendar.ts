@@ -1,11 +1,12 @@
 import type { SocialTaskCalendarItem } from "@growth-hacker/core";
 
 import type { AppConfig } from "./config";
+import { listConfiguredSocialAgents } from "./hermesProfiles";
 import { listSocialBoardTasks } from "./socialBoard";
 import { listSocialCronJobs } from "./socialCron";
 
 export function listSocialTaskCalendar(config: AppConfig): SocialTaskCalendarItem[] {
-  const agents = new Map(config.socialAgents.map((agent) => [agent.id, agent.runner]));
+  const agents = new Map(listConfiguredSocialAgents(config).map((agent) => [agent.id, agent.runner]));
   const cronItems: SocialTaskCalendarItem[] = listSocialCronJobs(config)
     .filter((job) => job.enabled && Boolean(job.nextRunAt))
     .map((job) => ({
