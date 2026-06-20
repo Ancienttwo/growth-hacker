@@ -29,7 +29,7 @@ Complete this inventory before implementation. If any line is unknown, keep the 
 - Run snapshots: `.ai/harness/runs/`
 - Scope authority: `tasks/contracts/20260620-0433-video-agent.contract.md` `allowed_paths`
 - Concurrency rule: `.ai/harness/active-plan` selects the active plan for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. If another worktree already owns active work, open or switch to the matching worktree instead of serializing unrelated plans.
-- Execution isolation: approved contract-level work projects through `scripts/plan-to-todo.sh --plan plans/plan-20260620-0433-video-agent.md` and may start `scripts/contract-worktree.sh start --plan plans/plan-20260620-0433-video-agent.md`.
+- Execution isolation: approved contract-level work projects through `repo-harness run plan-to-todo --plan plans/plan-20260620-0433-video-agent.md` and may start `repo-harness run contract-worktree start --plan plans/plan-20260620-0433-video-agent.md`.
 
 ## Approach
 ### Strategy
@@ -54,7 +54,7 @@ Complete this inventory before implementation. If any line is unknown, keep the 
 - Review file: `tasks/reviews/20260620-0433-video-agent.review.md`
 - Implementation notes file: `tasks/notes/20260620-0433-video-agent.notes.md`
 - Template: `.claude/templates/contract.template.md`
-- Verification command: `bash scripts/verify-contract.sh --contract tasks/contracts/20260620-0433-video-agent.contract.md --strict`
+- Verification command: `repo-harness run verify-contract --contract tasks/contracts/20260620-0433-video-agent.contract.md --strict`
 - Active plan rule: `.ai/harness/active-plan` is authoritative for this worktree when present; `.ai/harness/active-worktree` records the owning worktree; `.claude/.active-plan` is a legacy fallback during transition. Do not infer active execution from the latest non-archived plan.
 
 ## Handoff
