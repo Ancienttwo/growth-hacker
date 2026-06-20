@@ -82,12 +82,12 @@ workflow_events_file() {
   workflow_repo_relative_path "$(workflow_policy_get '.harness.events_file' '.ai/harness/events.jsonl')" '.ai/harness/events.jsonl' '.ai/harness/'
 }
 
-workflow_runs_dir() {
-  workflow_repo_relative_path "$(workflow_policy_get '.harness.runs_dir' '.ai/harness/runs')" '.ai/harness/runs' '.ai/harness/'
+workflow_trace_file() {
+  printf '%s' ".claude/.trace.jsonl"
 }
 
-workflow_context_budget_status_file() {
-  workflow_repo_relative_path "$(workflow_policy_get '.context_budget.status_file' '.ai/harness/context-budget/latest.json')" '.ai/harness/context-budget/latest.json' '.ai/harness/'
+workflow_runs_dir() {
+  workflow_repo_relative_path "$(workflow_policy_get '.harness.runs_dir' '.ai/harness/runs')" '.ai/harness/runs' '.ai/harness/'
 }
 
 workflow_resume_packet_file() {
@@ -105,7 +105,6 @@ workflow_ensure_harness_surface() {
     "$(dirname "$(workflow_policy_file)")" \
     "$(dirname "$(workflow_checks_file)")" \
     "$(dirname "$(workflow_handoff_file)")" \
-    "$(dirname "$(workflow_context_budget_status_file)")" \
     "$(dirname "$(workflow_resume_packet_file)")" \
     "$(dirname "$(workflow_failure_log_file)")" \
     "$(dirname "$(workflow_pending_orchestration_file)")" \
@@ -113,7 +112,6 @@ workflow_ensure_harness_surface() {
 
   [[ -f "$(workflow_checks_file)" ]] || printf "{}\n" > "$(workflow_checks_file)"
   [[ -f "$(workflow_handoff_file)" ]] || printf "# Harness Handoff\n\n> **Reason**: bootstrap\n" > "$(workflow_handoff_file)"
-  [[ -f "$(workflow_context_budget_status_file)" ]] || printf "{}\n" > "$(workflow_context_budget_status_file)"
   [[ -f "$(workflow_resume_packet_file)" ]] || printf "# Codex Resume Packet\n\n> **Reason**: bootstrap\n" > "$(workflow_resume_packet_file)"
   [[ -f "$(workflow_failure_log_file)" ]] || : > "$(workflow_failure_log_file)"
   [[ -f "$(workflow_events_file)" ]] || : > "$(workflow_events_file)"
@@ -268,11 +266,11 @@ get_plan_status() {
 }
 
 get_todo_source_plan() {
-  if [[ ! -f "tasks/todo.md" ]]; then
+  if [[ ! -f "tasks/todos.md" ]]; then
     return 1
   fi
 
-  awk -F': ' '/^\> \*\*Source Plan\*\*:/ {print $2; exit}' tasks/todo.md | xargs
+  awk -F': ' '/^\> \*\*Source Plan\*\*:/ {print $2; exit}' tasks/todos.md | xargs
 }
 
 workflow_plan_slug_from_path() {
@@ -364,9 +362,31 @@ workflow_preferred_or_legacy_path() {
   fi
 }
 
+workflow_plan_declared_path() {
+  local plan_file="$1"
+  local label="$2"
+  [[ -f "$plan_file" ]] || return 1
+  awk -v label="$label" '
+    BEGIN { pattern = "^> \\*\\*" label "\\*\\*:" }
+    $0 ~ pattern {
+      sub(pattern "[[:space:]]*", "")
+      gsub(/`/, "")
+      gsub(/\r/, "")
+      print
+      exit
+    }
+  ' "$plan_file" | xargs
+}
+
 derive_contract_path() {
   local plan_file="$1"
-  local stem slug
+  local stem slug explicit
+
+  explicit="$(workflow_plan_declared_path "$plan_file" "Task Contract" || workflow_plan_declared_path "$plan_file" "Sprint Contract" || true)"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return 0
+  fi
 
   stem="$(workflow_plan_artifact_stem_from_path "$plan_file" || true)"
   slug="$(workflow_plan_slug_from_path "$plan_file" || true)"
@@ -391,21 +411,21 @@ workflow_plan_slug() {
 }
 
 workflow_todo_total() {
-  if [[ ! -f "tasks/todo.md" ]]; then
+  if [[ ! -f "tasks/todos.md" ]]; then
     printf '0'
     return
   fi
 
-  grep -E '^[[:space:]]*-[[:space:]]\[[ xX]\][[:space:]]+' tasks/todo.md | wc -l | tr -d ' '
+  grep -E '^[[:space:]]*-[[:space:]]\[[ xX]\][[:space:]]+' tasks/todos.md | wc -l | tr -d ' '
 }
 
 workflow_todo_done() {
-  if [[ ! -f "tasks/todo.md" ]]; then
+  if [[ ! -f "tasks/todos.md" ]]; then
     printf '0'
     return
   fi
 
-  grep -E '^[[:space:]]*-[[:space:]]\[[xX]\][[:space:]]+' tasks/todo.md | wc -l | tr -d ' '
+  grep -E '^[[:space:]]*-[[:space:]]\[[xX]\][[:space:]]+' tasks/todos.md | wc -l | tr -d ' '
 }
 
 workflow_is_linked_worktree() {
@@ -510,8 +530,8 @@ workflow_plan_task_state() {
 
   # Legacy compatibility only: current repositories keep execution in the
   # active plan, but older generated repos may still carry a todo checklist.
-  if [[ -f "tasks/todo.md" ]] && ! grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todo.md; then
-    workflow_iterate_todo_tasks "tasks/todo.md" | workflow_plan_task_state_from_stream
+  if [[ -f "tasks/todos.md" ]] && ! grep -Eq '^> \*\*Status\*\*:[[:space:]]*Backlog[[:space:]]*$' tasks/todos.md; then
+    workflow_iterate_todo_tasks "tasks/todos.md" | workflow_plan_task_state_from_stream
     return 0
   fi
 
@@ -576,6 +596,7 @@ workflow_next_action() {
 
     if [[ "$total" -gt "$done" ]]; then
       message="${next_pending:-continue active plan Task Breakdown}"
+      message="If a major module was just completed, stage its coherent diff first; then continue the next Task Breakdown item: ${message}"
       printf 'task\t-\t%s\n' "$message"
       return 0
     fi
@@ -585,17 +606,17 @@ workflow_next_action() {
     checks_file="$(workflow_checks_file)"
 
     if [[ -z "$review_file" || ! -f "$review_file" ]]; then
-      printf 'check\t/check\tRun /check and record a sprint review before finishing this worktree.\n'
+      printf 'check\t/check\tStage the completed module diff first; then run /check and record a sprint review before finishing this worktree.\n'
       return 0
     fi
 
     if ! workflow_review_recommends_pass "$review_file"; then
-      printf 'check\t/check\tRun /check until %s records Recommendation: pass.\n' "$review_file"
+      printf 'check\t/check\tStage the completed module diff first; then run /check until %s records Recommendation: pass.\n' "$review_file"
       return 0
     fi
 
     if [[ -z "$contract_file" || ! -f "$contract_file" ]]; then
-      printf 'check\t/check\tRegenerate the active sprint contract, then run /check.\n'
+      printf 'check\t/check\tStage the completed module diff first; then regenerate the active sprint contract and run /check.\n'
       return 0
     fi
 
@@ -603,17 +624,17 @@ workflow_next_action() {
     IFS=$'\t' read -r external_state external_reviewer external_source external_message <<< "$external_status"
     if [[ "$external_state" != "pass" && "$external_state" != "manual_override" ]]; then
       expected_source="$(workflow_external_acceptance_expected_source)"
-      printf 'check\t/check\t%s Run external acceptance via %s and record ## External Acceptance Advice in %s.\n' "${external_message:-External acceptance is missing.}" "$expected_source" "$review_file"
+      printf 'check\t/check\tStage the completed module diff first; then %s Run external acceptance via %s and record ## External Acceptance Advice in %s.\n' "${external_message:-External acceptance is missing.}" "$expected_source" "$review_file"
       return 0
     fi
 
     if [[ ! -f "$checks_file" ]]; then
-      printf 'check\t/check\tRun /check and verify-sprint so %s exists.\n' "$checks_file"
+      printf 'check\t/check\tStage the completed module diff first; then run /check and verify-sprint so %s exists.\n' "$checks_file"
       return 0
     fi
 
     if ! checks_error="$(workflow_checks_pass "$checks_file" "$contract_file" "$review_file")"; then
-      printf 'check\t/check\t%s\n' "$checks_error"
+      printf 'check\t/check\tStage the completed module diff first; then resolve check evidence: %s\n' "$checks_error"
       return 0
     fi
 
@@ -672,7 +693,7 @@ workflow_read_state_field() {
 }
 
 workflow_iterate_todo_tasks() {
-  local todo_file="${1:-tasks/todo.md}"
+  local todo_file="${1:-tasks/todos.md}"
   [[ -f "$todo_file" ]] || return 0
 
   awk '
@@ -689,7 +710,7 @@ workflow_iterate_todo_tasks() {
 }
 
 workflow_sync_task_state_from_todo() {
-  local todo_file="${1:-tasks/todo.md}"
+  local todo_file="${1:-tasks/todos.md}"
   local state_file="${2:-.claude/.task-state.json}"
   local source_plan="${3:-}"
   local run_id="${HOOK_RUN_ID:-${CLAUDE_RUN_ID:-${CODEX_RUN_ID:-}}}"
@@ -885,18 +906,42 @@ workflow_pending_orchestration_summary() {
   printf '\n'
 }
 
-has_research_for_new_plan() {
-  local research_file="tasks/research.md"
-  local latest_plan research_mtime plan_mtime
+latest_research_report() {
+  local research_dir="${1:-docs/researches}"
+  local file mtime latest_file="" latest_mtime=0
 
-  [[ -f "$research_file" ]] || return 1
+  [[ -d "$research_dir" ]] || return 1
+
+  while IFS= read -r -d '' file; do
+    case "$(basename "$file")" in
+      README.md)
+        continue
+        ;;
+    esac
+
+    mtime="$(workflow_read_file_mtime "$file" || true)"
+    if [[ -n "$mtime" && "$mtime" -gt "$latest_mtime" ]]; then
+      latest_mtime="$mtime"
+      latest_file="$file"
+    fi
+  done < <(find "$research_dir" -type f -name '*.md' -print0 2>/dev/null)
+
+  [[ -n "$latest_file" ]] || return 1
+  printf '%s' "$latest_file"
+}
+
+has_research_for_new_plan() {
+  local latest_plan latest_report research_mtime plan_mtime
+
+  latest_report="$(latest_research_report || true)"
+  [[ -n "$latest_report" ]] || return 1
 
   latest_plan="$(get_latest_plan || true)"
   if [[ -z "$latest_plan" ]]; then
     return 0
   fi
 
-  research_mtime="$(workflow_read_file_mtime "$research_file" || true)"
+  research_mtime="$(workflow_read_file_mtime "$latest_report" || true)"
   plan_mtime="$(workflow_read_file_mtime "$latest_plan" || true)"
 
   [[ -n "$research_mtime" && -n "$plan_mtime" && "$research_mtime" -gt "$plan_mtime" ]]
@@ -1031,9 +1076,14 @@ workflow_active_contract() {
 }
 
 workflow_active_review() {
-  local active_plan stem slug reviews_dir
+  local active_plan stem slug reviews_dir explicit
   active_plan="$(get_active_plan || true)"
   [[ -n "$active_plan" ]] || return 1
+  explicit="$(workflow_plan_declared_path "$active_plan" "Task Review" || workflow_plan_declared_path "$active_plan" "Sprint Review" || true)"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return 0
+  fi
   stem="$(workflow_plan_artifact_stem_from_path "$active_plan" || true)"
   slug="$(workflow_plan_slug_from_path "$active_plan" || true)"
   [[ -n "$stem" && -n "$slug" ]] || return 1
@@ -1042,9 +1092,14 @@ workflow_active_review() {
 }
 
 workflow_active_notes() {
-  local active_plan stem slug notes_dir
+  local active_plan stem slug notes_dir explicit
   active_plan="$(get_active_plan || true)"
   [[ -n "$active_plan" ]] || return 1
+  explicit="$(workflow_plan_declared_path "$active_plan" "Implementation Notes" || workflow_plan_declared_path "$active_plan" "Notes File" || true)"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return 0
+  fi
   stem="$(workflow_plan_artifact_stem_from_path "$active_plan" || true)"
   slug="$(workflow_plan_slug_from_path "$active_plan" || true)"
   [[ -n "$stem" && -n "$slug" ]] || return 1
@@ -1060,18 +1115,103 @@ workflow_handoff_file() {
   workflow_repo_relative_path "$(workflow_policy_get '.harness.handoff_file' '.ai/harness/handoff/current.md')" '.ai/harness/handoff/current.md' '.ai/harness/'
 }
 
+# mkdir-based mutual exclusion (macOS ships no flock). Spins ~2s, breaks locks
+# older than 60s (crashed holder), and as a last resort runs the command
+# unlocked rather than wedging an advisory hook.
+workflow_with_lock() {
+  local name="$1"
+  shift
+  local lock_root lock_dir waited=0 now mtime status=0
+  lock_root="$(dirname "$(workflow_events_file)")/.locks"
+  lock_dir="$lock_root/${name}.lock"
+  if ! mkdir -p "$lock_root" 2>/dev/null; then
+    "$@" || status=$?
+    return "$status"
+  fi
+
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    if [[ "$waited" -ge 40 ]]; then
+      now="$(date +%s)"
+      mtime="$(stat -c '%Y' "$lock_dir" 2>/dev/null || stat -f '%m' "$lock_dir" 2>/dev/null || echo 0)"
+      if [[ "${mtime:-0}" =~ ^[0-9]+$ && "${mtime:-0}" -gt 0 && $((now - mtime)) -ge 60 ]]; then
+        rmdir "$lock_dir" 2>/dev/null || true
+        waited=0
+        continue
+      fi
+      "$@" || status=$?
+      return "$status"
+    fi
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+
+  "$@" || status=$?
+  rmdir "$lock_dir" 2>/dev/null || true
+  return "$status"
+}
+
+workflow_locked_append_line() {
+  printf '%s\n' "$2" >> "$1"
+}
+
+workflow_locked_increment_file() {
+  local file="$1" value
+  value="$(cat "$file" 2>/dev/null | tr -cd '0-9')"
+  value=$(( ${value:-0} + 1 ))
+  printf '%s\n' "$value" > "$file"
+  printf '%s' "$value"
+}
+
+# Atomic read-increment-write for small counter files (concurrent PostToolUse
+# hooks used to lose increments via unlocked read-modify-write).
+workflow_increment_counter() {
+  local file="$1"
+  workflow_with_lock "counter-$(basename "$file")" workflow_locked_increment_file "$file"
+}
+
+# Rotate an events JSONL file once it exceeds limits. Cold-path only (session
+# start); holds the same lock as appends so no event line is lost mid-rotate.
+workflow_rotate_events_file() {
+  local file="$1" max_lines="${2:-2000}" max_bytes="${3:-524288}" keep="${4:-500}"
+  [[ -f "$file" ]] || return 0
+  local lines bytes
+  lines="$(wc -l < "$file" 2>/dev/null | tr -cd '0-9')"
+  bytes="$(wc -c < "$file" 2>/dev/null | tr -cd '0-9')"
+  if [[ "${lines:-0}" -le "$max_lines" && "${bytes:-0}" -le "$max_bytes" ]]; then
+    return 0
+  fi
+  [[ "${lines:-0}" -gt "$keep" ]] || return 0
+  workflow_with_lock "evt-$(basename "$file")" workflow_rotate_events_file_locked "$file" "$lines" "$keep"
+}
+
+workflow_rotate_events_file_locked() {
+  local file="$1" lines="$2" keep="$3"
+  local archive_dir archive_file tmp cut
+  archive_dir="$(dirname "$file")/archive"
+  archive_file="$archive_dir/$(basename "$file" .jsonl)-$(date '+%Y%m').jsonl"
+  cut=$((lines - keep))
+  mkdir -p "$archive_dir" 2>/dev/null || return 0
+  tmp="$(mktemp 2>/dev/null)" || return 0
+  if head -n "$cut" "$file" >> "$archive_file" 2>/dev/null && tail -n "$keep" "$file" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$file"
+    echo "[WorkflowState] Rotated $(basename "$file"): archived $cut lines to $archive_file" >&2
+  else
+    rm -f "$tmp"
+  fi
+}
+
 workflow_append_event() {
   local event_type="$1"
   local reason="${2:-}"
   local extra_json="${3:-{}}"
-  local events_file run_id
+  local events_file run_id line=""
 
   workflow_ensure_harness_surface
   events_file="$(workflow_events_file)"
   run_id="${HOOK_RUN_ID:-${CLAUDE_RUN_ID:-${CODEX_RUN_ID:-run-$(date '+%Y%m%dT%H%M%S')-$$}}}"
 
   if command -v jq >/dev/null 2>&1; then
-    jq -nc \
+    line="$(jq -nc \
       --arg ts "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
       --arg event_type "$event_type" \
       --arg reason "$reason" \
@@ -1083,16 +1223,17 @@ workflow_append_event() {
         reason: $reason,
         run_id: $run_id,
         extra: (try ($extra_json | fromjson) catch {})
-      }' >> "$events_file"
-    return 0
+      }')"
+  else
+    line="$(printf '{"ts":"%s","event_type":"%s","reason":"%s","run_id":"%s"}' \
+      "$(workflow_json_escape "$(date '+%Y-%m-%dT%H:%M:%S%z')")" \
+      "$(workflow_json_escape "$event_type")" \
+      "$(workflow_json_escape "$reason")" \
+      "$(workflow_json_escape "$run_id")")"
   fi
 
-  printf '{"ts":"%s","event_type":"%s","reason":"%s","run_id":"%s"}\n' \
-    "$(workflow_json_escape "$(date '+%Y-%m-%dT%H:%M:%S%z')")" \
-    "$(workflow_json_escape "$event_type")" \
-    "$(workflow_json_escape "$reason")" \
-    "$(workflow_json_escape "$run_id")" \
-    >> "$events_file"
+  [[ -n "$line" ]] || return 0
+  workflow_with_lock "evt-$(basename "$events_file")" workflow_locked_append_line "$events_file" "$line"
 }
 
 workflow_write_run_summary() {
@@ -1394,20 +1535,39 @@ workflow_write_handoff() {
   local reason="${1:-session-stop}"
   local handoff_file active_plan active_contract active_review active_notes checks_file next_task changed_files diff_stat spec_file source_plan parent_run_id supersedes
   local next_action next_stage next_command next_message
-  local budget_file resume_file events_file recent_commands blockers decisions goal
+  local resume_file trace_file recent_commands blockers decisions goal latest_trace_file
+  local active_sprint active_sprint_row
   local changed_count untracked_count
 
   workflow_ensure_harness_surface
   handoff_file="$(workflow_handoff_file)"
   checks_file="$(workflow_checks_file)"
-  budget_file="$(workflow_context_budget_status_file)"
   resume_file="$(workflow_resume_packet_file)"
-  events_file="$(workflow_events_file)"
   spec_file="docs/spec.md"
   active_plan="$(get_active_plan || true)"
   active_contract="$(workflow_active_contract || true)"
   active_review="$(workflow_active_review || true)"
   active_notes="$(workflow_active_notes || true)"
+  active_sprint=""
+  if [[ -f ".ai/harness/sprint/active-sprint" ]]; then
+    active_sprint="$(cat ".ai/harness/sprint/active-sprint" 2>/dev/null | xargs)"
+  fi
+  active_sprint_row="(none)"
+  if [[ -n "$active_sprint" && -f "$active_sprint" ]]; then
+    active_sprint_row="$(
+      awk -v plan="$active_plan" '
+        /^\|[[:space:]]*[0-9]+[[:space:]]*\|/ {
+          if (plan != "" && index($0, plan) > 0) {
+            print
+            found = 1
+            exit
+          }
+        }
+        END { if (!found) exit 1 }
+      ' "$active_sprint" 2>/dev/null || true
+    )"
+    active_sprint_row="${active_sprint_row:-Active sprint: ${active_sprint}}"
+  fi
   source_plan="$(get_todo_source_plan || true)"
   if [[ "$source_plan" == "(none)" ]]; then
     source_plan=""
@@ -1457,10 +1617,10 @@ workflow_write_handoff() {
     diff_stat="git repository not detected"
   fi
 
-  if [[ -f "$events_file" ]]; then
+  trace_file="$(workflow_trace_file)"
+  if [[ -f "$trace_file" ]]; then
     recent_commands="$(
-      { grep '"event_type":"tool_trace"' "$events_file" 2>/dev/null || true; } \
-        | tail -5 \
+      tail -5 "$trace_file" 2>/dev/null \
         | sed -E 's/^/- /'
     )"
   fi
@@ -1479,6 +1639,12 @@ workflow_write_handoff() {
   fi
   decisions="Use filesystem artifacts as source of truth; treat SQLite/thread state as a rebuildable read model only."
   blockers="(none recorded)"
+  if [[ -f "$checks_file" ]] && command -v jq >/dev/null 2>&1; then
+    latest_trace_file="$(jq -r '.run_file // empty' "$checks_file" 2>/dev/null || true)"
+  else
+    latest_trace_file=""
+  fi
+  latest_trace_file="${latest_trace_file:-$checks_file}"
 
   cat > "$handoff_file" <<EOF_HANDOFF
 # Harness Handoff
@@ -1507,11 +1673,20 @@ ${recent_commands}
 ## Checks
 
 - Checks file: ${checks_file}
-- Context budget: ${budget_file}
+- Latest trace: ${latest_trace_file}
 
 ## Blockers
 
 - ${blockers}
+
+## Active Artifacts
+
+- Active plan: ${active_plan:-(none)}
+- Active contract: ${active_contract:-(none)}
+- Active sprint row: ${active_sprint_row}
+- Review file: ${active_review:-(none)}
+- Latest trace/checks file: ${latest_trace_file}
+- Resume packet: ${resume_file}
 
 ## Exact Next Step
 
@@ -1520,7 +1695,7 @@ ${recent_commands}
 ## Resume Prompt
 
 - Resume packet: ${resume_file}
-- Start a fresh Codex session and read this handoff before continuing; do not rely on auto-compact.
+- Start a fresh Codex session and read source artifacts first, then this handoff, before continuing; do not rely on auto-compact.
 
 ## Source Artifacts
 
@@ -1531,7 +1706,6 @@ ${recent_commands}
 - Review: ${active_review:-(none)}
 - Notes: ${active_notes:-(none)}
 - Checks: ${checks_file}
-- Context Budget: ${budget_file}
 - Resume Packet: ${resume_file}
 - Policy: $(workflow_policy_file)
 - Context Map: $(workflow_context_map_file)

@@ -1,21 +1,9 @@
-# Project — Research Notes
+# Research Notes Moved
 
-> **Last Updated**: TBD
-> **Scope**: (what area of the codebase was researched)
-> **Usage**: Store deep codebase findings and hidden contracts here, not in chat-only summaries.
+> **Status**: Retired tombstone
+> **Canonical Surface**: `docs/researches/`
+> **Legacy Archive**: `docs/researches/legacy-research-notes.md`
 
-## Codebase Map
-| File | Purpose | Key Exports |
-|------|---------|-------------|
-
-## Architecture Observations
-### Patterns & Conventions
-### Implicit Contracts
-### Edge Cases & Intricacies
-
-## Technical Debt / Risks
-
-## Research Conclusions
-### What to Preserve
-### What to Change
-### Open Questions
+Durable research reports now live under `docs/researches/*.md`. This file is
+kept only as a transition pointer for older tooling and historical links; do
+not add new findings here.

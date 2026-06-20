@@ -1,0 +1,26 @@
+{
+  "cwd": "/Users/chris/Documents/growth-hacker",
+  "codexHome": "/Users/chris/.codex",
+  "sessionId": "019e9159-9897-72e1-976b-a3e0f22aac54",
+  "threadId": "019e9159-9897-72e1-976b-a3e0f22aac54",
+  "model": "gpt-5.5",
+  "reasoningEffort": "xhigh",
+  "source": "rollout-token-count",
+  "zone": "yellow",
+  "usageTokens": 171821,
+  "contextWindow": 258400,
+  "usedPercent": 0.6649419504643963,
+  "remainingPercent": 0.3350580495356037,
+  "estimated": false,
+  "rolloutPath": "/Users/chris/.codex/sessions/2026/06/04/rollout-2026-06-04T14-37-08-019e9159-9897-72e1-976b-a3e0f22aac54.jsonl",
+  "statusFile": "/Users/chris/Documents/growth-hacker/.ai/harness/context-budget/latest.json",
+  "message": "context yellow zone: persist research, todo, and handoff state before continuing",
+  "handoffRecommended": false,
+  "stopRecommended": false,
+  "thresholds": {
+    "yellow": 0.55,
+    "orange": 0.7,
+    "red": 0.8
+  },
+  "generatedAt": "2026-06-04T06:49:50.208Z"
+}

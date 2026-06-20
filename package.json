@@ -18,12 +18,13 @@
     "yt-cli": "bun --silent packages/youtube-cli/src/cli.ts",
     "yt-cli:live-smoke": "bun scripts/youtube-cli-live-smoke.ts",
     "lint": "bun run typecheck",
-    "check:brain-manifest": "bash scripts/check-brain-manifest.sh",
-    "check:context-files": "bash scripts/check-context-files.sh",
-    "check:deploy-sql": "bash scripts/check-deploy-sql-order.sh",
-    "check:task-sync": "bash scripts/check-task-sync.sh",
-    "check:task-workflow": "bash scripts/check-task-workflow.sh --strict",
-    "sync:brain-docs": "bash scripts/sync-brain-docs.sh --all"
+    "check:brain-manifest": "repo-harness run check-brain-manifest",
+    "check:context-files": "repo-harness run check-context-files",
+    "check:deploy-sql": "repo-harness run check-deploy-sql-order",
+    "check:task-sync": "repo-harness run check-task-sync",
+    "check:task-workflow": "repo-harness run check-task-workflow --strict",
+    "sync:brain-docs": "repo-harness run sync-brain-docs --all",
+    "check:architecture-sync": "repo-harness run check-architecture-sync"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",

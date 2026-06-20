@@ -1,7 +1,8 @@
-# Sprint Contract: {{TASK_SLUG}}
+# Task Contract: {{TASK_SLUG}}
 
 > **Status**: Active
 > **Plan**: {{PLAN_FILE}}
+> **Task Profile**: {{TASK_PROFILE}}
 > **Owner**: {{OWNER}}
 > **Capability ID**: {{CAPABILITY_ID}}
 > **Last Updated**: {{TIMESTAMP}}
@@ -20,7 +21,7 @@ Describe the exact outcome this task must deliver.
 ## Workflow Inventory
 
 - Source plan: `{{PLAN_FILE}}`
-- Deferred-goal ledger: `tasks/todo.md`
+- Deferred-goal ledger: `tasks/todos.md`
 - Review file: `{{REVIEW_FILE}}`
 - Notes file: `{{NOTES_FILE}}`
 - Checks file: `.ai/harness/checks/latest.json`
@@ -34,13 +35,41 @@ Describe the exact outcome this task must deliver.
 allowed_paths:
   - docs/spec.md
   - plans/
-  - tasks/todo.md
+  - tasks/todos.md
   - {{CONTRACT_FILE}}
   - {{REVIEW_FILE}}
   - {{NOTES_FILE}}
   - .ai/context/capabilities.json
+  - .claude/templates/
   - src/
   - tests/
+```
+
+## Delegation Contract
+
+```yaml
+delegation:
+  budget:
+    tokens: null
+    tool_calls: null
+    wall_time_minutes: null
+  permission_scope:
+    mode: inherit_allowed_paths
+    writable_paths: []
+    network: inherited
+  roles:
+    parent:
+      mode: narrate_and_gatekeep
+      purpose: approval_checkpoint_owner
+    explorer:
+      mode: read_only
+      purpose: codebase_research
+    worker:
+      mode: edit_within_allowed_paths
+      purpose: implementation
+    verifier:
+      mode: read_only
+      purpose: exit_criteria_review
 ```
 
 ## Exit Criteria (Machine Verifiable)

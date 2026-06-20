@@ -1,10 +1,10 @@
 <!-- repo-harness: reference-config-stub v1 -->
-# repo-harness Reference: external-tooling
+# repo-harness Reference: heartbeat-triage
 
 > **Runtime Docs**: user-level repo-harness reference
-> **Doc ID**: external-tooling
+> **Doc ID**: heartbeat-triage
 > **Version**: 0.7.3
-> **Source Command**: `repo-harness docs path external-tooling`
+> **Source Command**: `repo-harness docs path heartbeat-triage`
 
 This repo keeps workflow facts and runtime artifacts locally under `.ai/`.
 The full generic runtime guide is supplied by the installed repo-harness
@@ -14,6 +14,6 @@ copy of shared documentation.
 Use:
 
 ```bash
-repo-harness docs path external-tooling
-repo-harness docs show external-tooling
+repo-harness docs path heartbeat-triage
+repo-harness docs show heartbeat-triage
 ```
