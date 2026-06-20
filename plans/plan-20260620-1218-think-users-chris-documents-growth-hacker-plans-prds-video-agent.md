@@ -205,6 +205,15 @@ Failure reporting:
 - [x] Update implementation notes with commands, pass/fail status, backup path, and skipped live checks.
 - [x] Prepare commit/PR summary: backend preproduction only, no UI, no paid provider, no publishing.
 
+### Phase 5 - Hermes-enabled Preproduction Smoke
+- [x] Probe live local Hermes API and auth/model status without exposing secrets.
+- [x] Start an isolated scheduler-enabled server using a temp `growthRoot`.
+- [x] Run a default-provider workflow and classify the Codex OAuth blocker.
+- [x] Run bounded `xai-oauth` provider/model probes with `maxAttempts: 1`.
+- [x] Run a successful Hermes-backed preproduction workflow to `waiting_approval`.
+- [x] Export the completed preproduction package manifest/files.
+- [x] Stop before approval, paid render, upload, or public publish, then close the server.
+
 ## Tests And Evidence
 
 Required gates:
@@ -218,6 +227,7 @@ Optional smoke gates:
 - `bun run growthctl -- video workflow start <projectId> --idempotency-key video-agent-smoke-v1`
 - `bun run growthctl -- workflow events <runId> --follow`
 - `bun run growthctl -- video package export <projectId> --revision 1`
+- Scheduler-enabled Hermes smoke to `waiting_approval` with package export, no approval/render/publish.
 
 Evidence contract:
 - Bundle hash verification result.
