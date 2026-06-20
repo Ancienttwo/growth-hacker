@@ -3,8 +3,30 @@
   "capabilities": [
     {
       "id": "video-agent-v1",
-      "name": "Video Studio and durable preproduction workflow",
+      "domain": "video-agent",
+      "name": "video-agent",
       "status": "active",
+      "prefixes": [
+        "packages/video-agent",
+        "apps/server/src/video",
+        "apps/growthctl",
+        "skills/creative/video-production-agent-skill"
+      ],
+      "contract_files": {
+        "agents": "packages/video-agent/AGENTS.md",
+        "claude": "packages/video-agent/CLAUDE.md"
+      },
+      "architecture_module": "docs/architecture/video-agent-refactor-v1.md",
+      "workstream_dir": "tasks/workstreams/video-agent/video-agent",
+      "lsp_profile": "typescript-lsp",
+      "verification_hints": [
+        "bun --filter @growth-hacker/video-agent typecheck",
+        "bun --filter @growth-hacker/video-agent test",
+        "bun --filter @growth-hacker/server typecheck",
+        "bun --filter @growth-hacker/growthctl typecheck",
+        "bun test packages/video-agent/test apps/server/test/videoWorkflow.test.ts"
+      ],
+      "title": "Video Studio and durable preproduction workflow",
       "ownership": [
         "packages/video-agent",
         "apps/server/src/video",
