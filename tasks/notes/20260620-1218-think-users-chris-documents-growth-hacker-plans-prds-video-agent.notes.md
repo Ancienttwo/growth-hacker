@@ -77,3 +77,15 @@
 - Server shutdown via `SIGINT` exited 0. Follow-up `curl -sS --max-time 2 http://127.0.0.1:18879/api/health || true` failed to connect, confirming the local listener was closed.
 - No preproduction approval was granted, no paid media render was started, no OAuth mutation was performed by Growth Hacker, no upload/public publish path was invoked, and the user's real `~/.growth` state was not touched.
 - Post-smoke `repo-harness run check-task-workflow --strict` initially failed on handoff freshness; `repo-harness adopt --repo /Users/chris/Documents/growth-hacker --compact --sync-codegraph --json` refreshed handoff/CodeGraph state, and the final `repo-harness run check-task-workflow --strict` passed with `[workflow] OK`.
+
+## Phase 6 - growthctl Provider/Model Surface
+
+- Code inspection found `apps/growthctl/src/cli.ts` already passed `--agent`, `--provider`, `--model`, and `--max-attempts` into the `/api/video/projects/:projectId/preproduction-runs` body. Gap classification: hidden CLI surface/help and missing operator example, not missing behavior.
+- Updated `growthctl` usage output so `video workflow start` advertises `[--agent AGENT] [--provider PROVIDER] [--model MODEL] [--max-attempts N]`, plus short option descriptions and the existing `--allow-remote-server` guard.
+- Updated `docs/examples/video-agent/README.md` with an optional Hermes provider/model smoke command using `--provider xai-oauth --model grok-4.3 --max-attempts 1`.
+- `bun --filter @growth-hacker/growthctl typecheck`: passed.
+- `bun run growthctl -- video workflow start --help`: confirmed the provider/model/max-attempts flags are visible in help output.
+- Isolated CLI smoke used `/tmp/growth-hacker-cli-flags-smoke.9ziZPX`, temp `growthRoot`, port `18880`, and `videoWorkflowScheduler: false`, so it did not call Hermes.
+- `bun run growthctl -- --server http://127.0.0.1:18880 video workflow start vprj_mqm0hzsr_a3ec207412d0414c --idempotency-key cli-flags-smoke-v1 --provider xai-oauth --model grok-4.3 --max-attempts 1`: passed; run `vrun_mqm0i4ko_ce2d6d8fbbb744c3` was queued with `requestedProvider: "xai-oauth"`, `requestedModel: "grok-4.3"`, and every workflow step recorded `maxAttempts: 1`.
+- Server shutdown via `SIGINT` exited 0. Follow-up `curl -sS --max-time 2 http://127.0.0.1:18880/api/health || true` failed to connect, confirming the local listener was closed.
+- `repo-harness run check-task-workflow --strict` initially failed on handoff freshness; `repo-harness adopt --repo /Users/chris/Documents/growth-hacker --compact --sync-codegraph --json` refreshed handoff/CodeGraph state, and the final `repo-harness run check-task-workflow --strict` passed with `[workflow] OK`.

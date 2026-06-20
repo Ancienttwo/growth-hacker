@@ -9,6 +9,13 @@ bun run growthctl -- video project create \
 bun run growthctl -- video workflow start <projectId> \
   --idempotency-key rain-night-v1
 
+# 可选：指定 Hermes provider/model，并限制每个 Step 的重试次数
+bun run growthctl -- video workflow start <projectId> \
+  --idempotency-key rain-night-hermes-v1 \
+  --provider xai-oauth \
+  --model grok-4.3 \
+  --max-attempts 1
+
 # 3. 查看状态或持续读取 JSONL 事件
 bun run growthctl -- workflow status <runId>
 bun run growthctl -- workflow events <runId> --follow

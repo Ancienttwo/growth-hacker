@@ -214,6 +214,13 @@ Failure reporting:
 - [x] Export the completed preproduction package manifest/files.
 - [x] Stop before approval, paid render, upload, or public publish, then close the server.
 
+### Phase 6 - growthctl Provider/Model Surface
+- [x] Confirm `growthctl video workflow start` already passes `--agent`, `--provider`, `--model`, and `--max-attempts` to the server start contract.
+- [x] Make those workflow-start flags visible in CLI usage/help.
+- [x] Update the Video Agent example README with a provider/model/max-attempts smoke command.
+- [x] Run an isolated scheduler-off CLI smoke proving `requestedProvider`, `requestedModel`, and step `maxAttempts` are persisted without touching Hermes.
+- [x] Run focused growthctl typecheck.
+
 ## Tests And Evidence
 
 Required gates:
@@ -225,6 +232,7 @@ Required gates:
 Optional smoke gates:
 - `bun run growthctl -- video project create --input @examples/video-agent/project.json`
 - `bun run growthctl -- video workflow start <projectId> --idempotency-key video-agent-smoke-v1`
+- `bun run growthctl -- video workflow start <projectId> --idempotency-key video-agent-smoke-v1 --provider xai-oauth --model grok-4.3 --max-attempts 1`
 - `bun run growthctl -- workflow events <runId> --follow`
 - `bun run growthctl -- video package export <projectId> --revision 1`
 - Scheduler-enabled Hermes smoke to `waiting_approval` with package export, no approval/render/publish.
