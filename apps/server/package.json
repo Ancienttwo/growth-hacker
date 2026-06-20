@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@growth-hacker/core": "workspace:*"
+    "@growth-hacker/core": "workspace:*",
+    "@growth-hacker/video-agent": "workspace:*"
   }
 }

@@ -1,0 +1,32 @@
+{
+  "title": "雨夜归伞",
+  "source": {
+    "kind": "story",
+    "language": "zh-CN",
+    "sourceName": "rain-station-story",
+    "text": "雨夜，末班车离站后，一名年轻人回到空荡的站台，把捡到的红伞放回长椅。远处，一个老人重新出现。年轻人没有等待道谢，只在列车灯光掠过时转身离开。"
+  },
+  "brief": {
+    "targetAudience": "18—35 岁、偏好电影感叙事的短视频观众",
+    "intendedUse": "60 秒以内的竖屏叙事短片",
+    "aspectRatio": "9:16",
+    "targetDurationSec": 45,
+    "language": "zh-CN",
+    "narrativeFormat": "无对白电影感微短片",
+    "visualStyle": "克制的写实电影感，雨后湿润材质，低饱和环境中突出红伞",
+    "pace": "measured",
+    "contentRating": "全年龄",
+    "mustKeep": [
+      "红伞必须是贯穿全片的视觉锚点",
+      "主角不等待道谢就离开",
+      "结尾出现老人重新看到红伞"
+    ],
+    "avoid": [
+      "品牌标识",
+      "字幕直接解释人物动机",
+      "夸张慢动作",
+      "无叙事目的的炫技运镜"
+    ],
+    "references": []
+  }
+}

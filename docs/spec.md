@@ -95,3 +95,15 @@ the operator's machine under `~/.growth` and `~/.hermes`.
   pattern do they inherit — the `yt-cli` dry-run/confirm model is the candidate.
 - X and Facebook are declared in `WORKSPACE_PLATFORMS` but have no adapter
   behavior; decide whether to implement or remove them from the type surface.
+
+<!-- video-agent-v1:start -->
+## Video Studio / Video Agent
+
+- Video production is a platform-independent local capability; YouTube and Xiaohongshu are downstream distribution targets.
+- A versioned Video Project stores the source story/screenplay and Production Brief.
+- `video.preproduction.v1` durably produces story analysis, Story/Visual Bible, scene breakdown, shot plan, continuity report, Canonical PromptSpec, provider prompts, render manifest, Storyboard Markdown, CSV exports, and a package manifest.
+- Runtime state and approvals are stored in SQLite; immutable large artifacts are stored beneath the local Growth root with SHA-256 metadata.
+- Agent stages return versioned structured JSON. Workflow control, validation, retries, state transitions, prompt compilation, and artifact registration remain deterministic application responsibilities.
+- Preproduction is `local_write`. Paid rendering is `external_cost`, and publishing is `external_publish`; both require separate approval-gated workflows.
+- `growthctl` is a thin localhost HTTP adapter and never opens the database or reads credentials directly.
+<!-- video-agent-v1:end -->

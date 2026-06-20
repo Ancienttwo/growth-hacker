@@ -24,7 +24,10 @@
     "check:task-sync": "repo-harness run check-task-sync",
     "check:task-workflow": "repo-harness run check-task-workflow --strict",
     "sync:brain-docs": "repo-harness run sync-brain-docs --all",
-    "check:architecture-sync": "repo-harness run check-architecture-sync"
+    "check:architecture-sync": "repo-harness run check-architecture-sync",
+    "growthctl": "bun --silent apps/growthctl/src/cli.ts",
+    "test:video-agent": "bun test packages/video-agent/test apps/server/test/videoWorkflow.test.ts",
+    "verify:video-agent": "bash scripts/verify-video-agent.sh"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",

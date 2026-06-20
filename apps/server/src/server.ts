@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Hono } from "hono";
+import { createVideoModule } from "./video";
 
 import {
   activateChatSession,
@@ -86,6 +87,8 @@ export function createApp() {
   const jobs = new JobStore();
   const stopSocialCronScheduler = startSocialCronScheduler(config, jobs);
   const app = new Hono();
+  const video = createVideoModule(config);
+  app.route("/api/video", video.router);
 
   app.get("/api/health", (c) => c.json({ ok: true, growthRoot: config.growthRoot }));
 
@@ -707,7 +710,7 @@ export function createApp() {
     return c.text("Growth Hacker API is running. Start the web UI with `bun run dev:web`.", 200);
   });
 
-  return { app, config, jobs, stopSocialCronScheduler };
+  return { app, config, jobs, stopSocialCronScheduler, stopVideoWorkflowScheduler: video.stop };
 }
 
 function previewHeaders(size: number, contentType: string): Record<string, string> {

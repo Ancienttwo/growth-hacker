@@ -175,12 +175,12 @@ Failure reporting:
 - [x] Read source references: PRD, architecture V2, implementation report, refactor README, apply script, verify script.
 
 ### Phase 1 - Apply Additive Bundle
-- [ ] Confirm explicit implementation approval.
-- [ ] Run `bash plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/scripts/apply.sh .`.
-- [ ] Capture `.video-agent-refactor-backup/<stamp>/`.
-- [ ] Review `package.json` and `apps/server/package.json` for expected script/dependency edits only.
-- [ ] Review `apps/server/src/server.ts` and `apps/server/src/index.ts` for route mount, scheduler shutdown, and `127.0.0.1` default bind.
-- [ ] Review `docs/spec.md` and `.ai/context/capabilities.json` for one `video-agent-v1` block/entry.
+- [x] Confirm explicit implementation approval.
+- [x] Run `bash plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/scripts/apply.sh .`.
+- [x] Capture `.video-agent-refactor-backup/<stamp>/`.
+- [x] Review `package.json` and `apps/server/package.json` for expected script/dependency edits only.
+- [x] Review `apps/server/src/server.ts` and `apps/server/src/index.ts` for route mount, scheduler shutdown, and `127.0.0.1` default bind.
+- [x] Review `docs/spec.md` and `.ai/context/capabilities.json` for one `video-agent-v1` block/entry.
 
 ### Phase 2 - Verification
 - [ ] Run `bun install`.
