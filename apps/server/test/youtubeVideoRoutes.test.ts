@@ -36,7 +36,7 @@ describe("YouTube video workflow route", () => {
       return Response.json({ run_id: "run_abcdef", status: "queued" });
     }) as typeof fetch;
 
-    const { app, stopSocialCronScheduler } = createApp();
+    const { app, stopSocialCronScheduler, stopVideoWorkflowScheduler } = createApp();
     try {
       const response = await app.request("/api/platforms/youtube/profiles/astrozi/video-runs", {
         method: "POST",
@@ -54,6 +54,7 @@ describe("YouTube video workflow route", () => {
       expect(hermesBody.metadata).toMatchObject({ agent_id: "growth-agent", reasoning_effort: "high", permission_mode: "ask" });
       expect(String(hermesBody.input)).toContain("video_generate");
     } finally {
+      stopVideoWorkflowScheduler();
       stopSocialCronScheduler();
       globalThis.fetch = originalFetch;
     }

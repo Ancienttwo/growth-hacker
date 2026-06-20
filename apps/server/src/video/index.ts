@@ -11,11 +11,13 @@ export function createVideoModule(config: AppConfig) {
   const agent = new HermesVideoAgentAdapter(config);
   const coordinator = new VideoWorkflowCoordinator({ repository, artifacts, agent });
   const router = createVideoRoutes(coordinator);
-  const stopScheduler = startVideoWorkflowScheduler(coordinator, {
-    onError(error) {
-      console.error("[video-agent] scheduler tick failed", error);
-    },
-  });
+  const stopScheduler = config.videoWorkflowScheduler
+    ? startVideoWorkflowScheduler(coordinator, {
+        onError(error) {
+          console.error("[video-agent] scheduler tick failed", error);
+        },
+      })
+    : () => {};
   let stopped = false;
 
   return {

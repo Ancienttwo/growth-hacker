@@ -18,6 +18,7 @@ export interface AppConfig {
   bundledXiaohongshuSkillRoot: string;
   legacyXiaohongshuRoot: string;
   port: number;
+  videoWorkflowScheduler?: boolean;
 }
 
 interface RawConfig {
@@ -32,6 +33,7 @@ interface RawConfig {
   bundledXiaohongshuSkillRoot?: string;
   legacyXiaohongshuRoot?: string;
   port?: number;
+  videoWorkflowScheduler?: boolean;
 }
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +43,12 @@ export function expandHome(value: string): string {
   if (value === "~") return homedir();
   if (value.startsWith("~/")) return resolve(homedir(), value.slice(2));
   return resolve(value);
+}
+
+function envFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function readRawConfig(cwd = process.cwd()): RawConfig {
@@ -73,7 +81,8 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     bundledHermesSkillsRoot: raw.bundledHermesSkillsRoot ? expandHome(raw.bundledHermesSkillsRoot) : resolve(repoRoot, "skills"),
     bundledXiaohongshuSkillRoot: bundledRoot,
     legacyXiaohongshuRoot: expandHome(raw.legacyXiaohongshuRoot ?? "~/.xiaohongshu/client"),
-    port: Number(process.env.PORT ?? raw.port ?? 8787)
+    port: Number(process.env.PORT ?? raw.port ?? 8787),
+    videoWorkflowScheduler: raw.videoWorkflowScheduler ?? envFlag(process.env.GROWTH_HACKER_VIDEO_WORKFLOW),
   };
 }
 

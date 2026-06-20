@@ -54,7 +54,7 @@ describe("YouTube CLI profile status", () => {
     );
     process.chdir(cwd);
 
-    const { app, stopSocialCronScheduler } = createApp();
+    const { app, stopSocialCronScheduler, stopVideoWorkflowScheduler } = createApp();
     try {
       const response = await app.request("/api/platforms/youtube/profiles/astrozi/status");
       const payload = await response.json();
@@ -69,6 +69,7 @@ describe("YouTube CLI profile status", () => {
       });
       expect(payload.auth.tokenPath).toBe(join(growthRoot, "astrozi/youtube/auth/token.json"));
     } finally {
+      stopVideoWorkflowScheduler();
       stopSocialCronScheduler();
     }
   });

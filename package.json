@@ -14,7 +14,7 @@
     "dev:web": "bun --filter @growth-hacker/web dev",
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
-    "test": "bun test apps packages",
+    "test": "bun test ./apps ./packages",
     "yt-cli": "bun --silent packages/youtube-cli/src/cli.ts",
     "yt-cli:live-smoke": "bun scripts/youtube-cli-live-smoke.ts",
     "lint": "bun run typecheck",
