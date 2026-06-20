@@ -36,3 +36,13 @@
 - Implementation commit: `b4de860 feat(video-agent): integrate preproduction slice`.
 - Verification follow-up keeps source pack and backup directories out of staging; only root script/lockfile, plan, and notes changes are staged for the verification commit.
 - Local operator smoke was skipped because the required full test/workflow gates were not fully green; failures are classified above.
+
+## Acceptance Gate Cleanup
+
+- Added root TypeScript path aliases for `@growth-hacker/core` and `@growth-hacker/video-agent`; this lets Bun resolve workspace package imports even when its substring test discovery reaches the tracked reference pack under `plans/prds/video-agent-pack/`.
+- `bun test apps packages`: passed after the alias fix, 185 tests, 544 assertions.
+- `bun run typecheck`: passed after the alias fix for `core`, `growthctl`, `video-agent`, `youtube-cli`, `server`, and `web`.
+- `bun run verify:video-agent`: passed after the alias fix, 12 tests, 51 assertions.
+- `repo-harness adopt --repo /Users/chris/Documents/growth-hacker --compact --sync-codegraph --json`: exited 0, refreshed repo-local workflow contract and handoff, synced CodeGraph, and reported `[workflow] OK`.
+- `repo-harness run check-task-workflow --strict`: passed with `[workflow] OK`.
+- Local operator smoke remains skipped: it is a live runtime/Hermes path, while this cleanup targeted the previously failing required acceptance gates.

@@ -2,7 +2,7 @@
   "version": 1,
   "profile": "stable-root-progressive-subdir",
   "functional_block_selector": {
-    "script": ".ai/harness/scripts/select-agent-context-blocks.sh",
+      "script": "scripts/select-agent-context-blocks.sh",
     "config_file": ".ai/context/agent-context-blocks.txt",
     "env": "REPO_HARNESS_CONTEXT_BLOCKS",
     "rule": "compatibility selector; capability registry is the source of truth"
@@ -22,6 +22,36 @@
     ".ai/harness/policy.json"
   ],
   "discoverable_contexts": [
+    {
+          "path": "packages/video-agent/CLAUDE.md",
+          "priority": "high",
+          "char_budget": 1000,
+          "purpose": "capability-contract",
+          "capability_id": "video-agent-v1",
+          "functional_block": "packages/video-agent",
+          "matched_prefix": "packages/video-agent",
+          "architecture_domain": "video-agent",
+          "architecture_capability": "video-agent",
+          "target_agent": "claude",
+          "lsp_profile": "typescript-lsp",
+          "doc_scope": "capability-contract",
+          "verification_hint": "bun --filter @growth-hacker/video-agent typecheck"
+    },
+    {
+          "path": "packages/video-agent/AGENTS.md",
+          "priority": "high",
+          "char_budget": 1000,
+          "purpose": "capability-contract",
+          "capability_id": "video-agent-v1",
+          "functional_block": "packages/video-agent",
+          "matched_prefix": "packages/video-agent",
+          "architecture_domain": "video-agent",
+          "architecture_capability": "video-agent",
+          "target_agent": "codex",
+          "lsp_profile": "typescript-lsp",
+          "doc_scope": "capability-contract",
+          "verification_hint": "bun --filter @growth-hacker/video-agent typecheck"
+    },
     {
       "path": "docs/reference-configs/*.md",
       "priority": "low",

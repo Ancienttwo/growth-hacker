@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "contractId": "tasks-first-harness-v2",
+  "generated": {
+    "wrappers": {}
+  },
+  "reclaimed": {
+    "scripts/new-spec.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run new-spec"
+    },
+    "scripts/new-sprint.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run new-sprint"
+    },
+    "scripts/new-plan.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run new-plan"
+    },
+    "scripts/capture-plan.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run capture-plan"
+    },
+    "scripts/plan-to-todo.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run plan-to-todo"
+    },
+    "scripts/contract-worktree.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run contract-worktree"
+    },
+    "scripts/ship-worktrees.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run ship-worktrees"
+    },
+    "scripts/archive-workflow.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run archive-workflow"
+    },
+    "scripts/refresh-current-status.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run refresh-current-status"
+    },
+    "scripts/prepare-handoff.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run prepare-handoff"
+    },
+    "scripts/verify-contract.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run verify-contract"
+    },
+    "scripts/summarize-failures.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run summarize-failures"
+    },
+    "scripts/verify-sprint.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run verify-sprint"
+    },
+    "scripts/harness-trace-grade.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run harness-trace-grade"
+    },
+    "scripts/sprint-backlog.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run sprint-backlog"
+    },
+    "scripts/check-task-sync.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-task-sync"
+    },
+    "scripts/check-deploy-sql-order.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-deploy-sql-order"
+    },
+    "scripts/check-architecture-sync.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-architecture-sync"
+    },
+    "scripts/check-agent-tooling.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-agent-tooling"
+    },
+    "scripts/check-context-files.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-context-files"
+    },
+    "scripts/check-brain-manifest.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-brain-manifest"
+    },
+    "scripts/sync-brain-docs.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run sync-brain-docs"
+    },
+    "scripts/select-agent-context-blocks.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run select-agent-context-blocks"
+    },
+    "scripts/ensure-task-workflow.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run ensure-task-workflow"
+    },
+    "scripts/check-task-workflow.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run check-task-workflow"
+    },
+    "scripts/maintenance-triage.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run maintenance-triage"
+    },
+    "scripts/heartbeat-triage.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run heartbeat-triage"
+    },
+    "scripts/switch-plan.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run switch-plan"
+    },
+    "scripts/migrate-project-template.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run migrate-project-template"
+    },
+    "scripts/architecture-queue.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run architecture-queue"
+    },
+    "scripts/archive-architecture-request.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run archive-architecture-request"
+    },
+    "scripts/context-contract-sync.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run context-contract-sync"
+    },
+    "scripts/workstream-sync.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run workstream-sync"
+    },
+    "scripts/prepare-codex-handoff.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run prepare-codex-handoff"
+    },
+    "scripts/codex-handoff-resume.sh": {
+      "kind": "helper-runtime",
+      "reclaimed_at": "2026-06-20T06:17:24.883Z",
+      "replacement": "repo-harness run codex-handoff-resume"
+    }
+  }
+}

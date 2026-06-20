@@ -1,6 +1,6 @@
 # Plan: Video Agent Sprint checklist from PRD pack
 
-> **Status**: Draft
+> **Status**: Done
 > **Created**: 20260620-1218
 > **Slug**: think-users-chris-documents-growth-hacker-plans-prds-video-agent
 > **Planning Source**: waza-think

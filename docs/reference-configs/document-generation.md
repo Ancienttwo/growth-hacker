@@ -3,7 +3,7 @@
 
 > **Runtime Docs**: user-level repo-harness reference
 > **Doc ID**: document-generation
-> **Version**: 0.7.3
+> **Version**: 0.7.4
 > **Source Command**: `repo-harness docs path document-generation`
 
 This repo keeps workflow facts and runtime artifacts locally under `.ai/`.

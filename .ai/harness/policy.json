@@ -157,10 +157,11 @@
       "project_path": "icloud/brain/<project>/*",
       "manifest_file": ".ai/harness/brain-manifest.json",
       "drift_check": "repo-harness run check-brain-manifest",
-      "sync_command": "repo-harness run sync-brain-docs --all",
+      "sync_script": "scripts/sync-brain-docs.sh",
       "hook_trigger": "PostToolUse Edit|Write for manifest entries with sync.direction=repo-to-brain",
       "rule": "external knowledge stores long-lived explanations, runbooks, and patterns only; repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
-      "sync_rule": "only explicitly opted-in repo-to-brain manifest entries may be written to the default brain vault; pointer-only externalized stubs remain check-only"
+      "sync_rule": "only explicitly opted-in repo-to-brain manifest entries may be written to the default brain vault; pointer-only externalized stubs remain check-only",
+      "sync_command": "repo-harness run sync-brain-docs --all"
     }
   },
   "handoff_resume": {
