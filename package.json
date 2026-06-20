@@ -26,7 +26,7 @@
     "sync:brain-docs": "repo-harness run sync-brain-docs --all",
     "check:architecture-sync": "repo-harness run check-architecture-sync",
     "growthctl": "bun --silent apps/growthctl/src/cli.ts",
-    "test:video-agent": "bun test packages/video-agent/test apps/server/test/videoWorkflow.test.ts",
+    "test:video-agent": "bun test \"$PWD/packages/video-agent/test/video-agent.test.ts\" \"$PWD/apps/server/test/videoWorkflow.test.ts\"",
     "verify:video-agent": "bash scripts/verify-video-agent.sh"
   },
   "dependencies": {

@@ -21,7 +21,7 @@ Success criteria:
 - Apply the bundle only after explicit implementation approval.
 - Keep Video Agent platform-independent: content production belongs to Video Studio; YouTube/XHS remain downstream distribution targets.
 - Integrate the backend/domain/CLI/docs/skill vertical slice without starting paid rendering, upload, publish, OAuth mutation, or credential migration.
-- Pass or precisely classify failures for `bun install`, `bash scripts/verify-video-agent.sh`, `bun run typecheck`, `bun test apps packages`, and `bash scripts/check-task-workflow.sh --strict`.
+- Pass or precisely classify failures for `bun install`, `bun run verify:video-agent`, `bun run typecheck`, `bun test apps packages`, and `repo-harness run check-task-workflow --strict`.
 - Keep this work separate from the existing repo-harness 0.7.3 refresh and unrelated untracked research artifacts.
 
 ## Scope And Non-Scope
@@ -183,12 +183,12 @@ Failure reporting:
 - [x] Review `docs/spec.md` and `.ai/context/capabilities.json` for one `video-agent-v1` block/entry.
 
 ### Phase 2 - Verification
-- [ ] Run `bun install`.
-- [ ] Run `bash scripts/verify-video-agent.sh`.
-- [ ] Run `bun run typecheck`.
-- [ ] Run `bun test apps packages`.
-- [ ] Run `bash scripts/check-task-workflow.sh --strict`.
-- [ ] Confirm no paid provider call or public publish path executed.
+- [x] Run `bun install`.
+- [x] Run `bun run verify:video-agent`.
+- [x] Run `bun run typecheck`.
+- [x] Run `bun test apps packages`.
+- [x] Run `repo-harness run check-task-workflow --strict`.
+- [x] Confirm no paid provider call or public publish path executed.
 
 ### Phase 3 - Local Operator Smoke
 - [ ] Start local server only after compile/test gates pass.
@@ -200,18 +200,18 @@ Failure reporting:
 - [ ] Stop server and confirm scheduler/SQLite shutdown is clean.
 
 ### Phase 4 - Review And Packaging
-- [ ] Inspect `git diff --stat` and verify it matches bundle scope.
-- [ ] Keep source pack, plan files, and implementation diff staging decisions explicit.
-- [ ] Update implementation notes with commands, pass/fail status, backup path, and skipped live checks.
-- [ ] Prepare commit/PR summary: backend preproduction only, no UI, no paid provider, no publishing.
+- [x] Inspect `git diff --stat` and verify it matches bundle scope.
+- [x] Keep source pack, plan files, and implementation diff staging decisions explicit.
+- [x] Update implementation notes with commands, pass/fail status, backup path, and skipped live checks.
+- [x] Prepare commit/PR summary: backend preproduction only, no UI, no paid provider, no publishing.
 
 ## Tests And Evidence
 
 Required gates:
-- `bash scripts/verify-video-agent.sh`
+- `bun run verify:video-agent`
 - `bun run typecheck`
 - `bun test apps packages`
-- `bash scripts/check-task-workflow.sh --strict`
+- `repo-harness run check-task-workflow --strict`
 
 Optional smoke gates:
 - `bun run growthctl -- video project create --input @examples/video-agent/project.json`

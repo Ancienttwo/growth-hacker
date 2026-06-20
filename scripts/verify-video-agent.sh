@@ -7,6 +7,6 @@ cd "$REPO_ROOT"
 bun --filter @growth-hacker/video-agent typecheck
 bun --filter @growth-hacker/growthctl typecheck
 bun --filter @growth-hacker/server typecheck
-bun test packages/video-agent/test apps/server/test/videoWorkflow.test.ts
+bun test "$REPO_ROOT/packages/video-agent/test/video-agent.test.ts" "$REPO_ROOT/apps/server/test/videoWorkflow.test.ts"
 
 echo "Video Agent verification passed."

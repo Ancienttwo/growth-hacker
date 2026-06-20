@@ -21,11 +21,19 @@
         "typescript": "^5.9.3",
       },
     },
+    "apps/growthctl": {
+      "name": "@growth-hacker/growthctl",
+      "version": "0.1.0",
+      "bin": {
+        "growthctl": "./src/cli.ts",
+      },
+    },
     "apps/server": {
       "name": "@growth-hacker/server",
       "version": "0.1.0",
       "dependencies": {
         "@growth-hacker/core": "workspace:*",
+        "@growth-hacker/video-agent": "workspace:*",
       },
     },
     "apps/web": {
@@ -51,6 +59,10 @@
     },
     "packages/core": {
       "name": "@growth-hacker/core",
+      "version": "0.1.0",
+    },
+    "packages/video-agent": {
+      "name": "@growth-hacker/video-agent",
       "version": "0.1.0",
     },
     "packages/youtube-cli": {
@@ -190,7 +202,11 @@
 
     "@growth-hacker/core": ["@growth-hacker/core@workspace:packages/core"],
 
+    "@growth-hacker/growthctl": ["@growth-hacker/growthctl@workspace:apps/growthctl"],
+
     "@growth-hacker/server": ["@growth-hacker/server@workspace:apps/server"],
+
+    "@growth-hacker/video-agent": ["@growth-hacker/video-agent@workspace:packages/video-agent"],
 
     "@growth-hacker/web": ["@growth-hacker/web@workspace:apps/web"],
 

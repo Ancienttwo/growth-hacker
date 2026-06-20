@@ -17,3 +17,22 @@
 - Second apply run succeeded. Backup path: `.video-agent-refactor-backup/20260620T043006Z-48613-18112`; the earlier partial backup remains at `.video-agent-refactor-backup/20260620T042932Z-44283-1599`.
 - Review confirmed expected edits only in root/server package manifests, server route mount, server lifecycle, `docs/spec.md`, and `.ai/context/capabilities.json`.
 - Concurrent repo state changed after Phase 0: `HEAD` advanced to `f01cf52 chore(video-agent): add video-agent reference implementation pack`, so `plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/` is now tracked source material rather than untracked source material.
+
+## Phase 2 - Verification
+
+- `bun install`: passed with Bun 1.3.10 and saved `bun.lock`; no package install changes beyond new workspace lockfile entries.
+- First `bash scripts/verify-video-agent.sh`: failed because Bun matched duplicate tracked reference-pack tests under `plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/**`.
+- Fix applied: root `test:video-agent` and `scripts/verify-video-agent.sh` now pass absolute test file paths so Bun runs only the integrated workspace tests.
+- `bun run test:video-agent`: passed, 12 tests, 51 assertions.
+- `bash scripts/verify-video-agent.sh`: passed; `@growth-hacker/video-agent`, `@growth-hacker/growthctl`, and `@growth-hacker/server` typechecks exited 0, then 12 tests passed.
+- `bun run verify:video-agent`: passed; it delegates to `bash scripts/verify-video-agent.sh` and produced the same 12-test/51-assertion pass.
+- `bun run typecheck`: passed for `core`, `growthctl`, `video-agent`, `youtube-cli`, `server`, and `web`.
+- `bun test apps packages`: failed after 193 passing tests because Bun treats `apps` and `packages` as substring filters and still discovers tracked reference-pack tests under `plans/prds/video-agent-pack/growth-hacker-video-agent-refactor/apps/server/test/videoWorkflow.test.ts`; that duplicate pack test cannot resolve workspace package `@growth-hacker/video-agent` from inside the source pack. Classification: source-pack/test-discovery contamination, not integrated Video Agent code failure.
+- `repo-harness run check-task-workflow --strict`: failed before task validation because repo-harness reported missing user-level script directories/files such as `new-spec.sh`, `check-task-workflow.sh`, and stale handoff resume/current ordering. Classification: repo-harness runtime/source resolution drift outside the Video Agent implementation path.
+- No paid media provider, OAuth mutation, upload, public publish, or Video Agent external render approval path was executed. Video workflow tests used fake Agent ports.
+
+## Phase 4 - Review And Packaging
+
+- Implementation commit: `b4de860 feat(video-agent): integrate preproduction slice`.
+- Verification follow-up keeps source pack and backup directories out of staging; only root script/lockfile, plan, and notes changes are staged for the verification commit.
+- Local operator smoke was skipped because the required full test/workflow gates were not fully green; failures are classified above.
