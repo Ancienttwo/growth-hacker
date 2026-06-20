@@ -191,13 +191,13 @@ Failure reporting:
 - [x] Confirm no paid provider call or public publish path executed.
 
 ### Phase 3 - Local Operator Smoke
-- [ ] Start local server only after compile/test gates pass.
-- [ ] Run `bun run growthctl -- video project create --input @examples/video-agent/project.json`.
-- [ ] Run `bun run growthctl -- video workflow start <projectId> --idempotency-key video-agent-smoke-v1`.
-- [ ] Observe events through `bun run growthctl -- workflow events <runId> --follow`.
-- [ ] Stop at preproduction approval; do not approve paid render or publish.
-- [ ] Export package manifest with `bun run growthctl -- video package export <projectId> --revision 1`.
-- [ ] Stop server and confirm scheduler/SQLite shutdown is clean.
+- [x] Start local server only after compile/test gates pass.
+- [x] Run `bun run growthctl -- video project create --input @examples/video-agent/project.json`.
+- [x] Run `bun run growthctl -- video workflow start <projectId> --idempotency-key video-agent-smoke-v1`.
+- [x] Observe events through `bun run growthctl -- workflow events <runId> --follow`.
+- [x] Stop before external preproduction execution; do not approve paid render or publish.
+- [x] Run `bun run growthctl -- video package export <projectId> --revision 1` and classify the expected `workflow_not_ready` guard before a completed package exists.
+- [x] Stop server and confirm scheduler/SQLite shutdown is clean.
 
 ### Phase 4 - Review And Packaging
 - [x] Inspect `git diff --stat` and verify it matches bundle scope.

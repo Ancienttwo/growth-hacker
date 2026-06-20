@@ -45,4 +45,18 @@
 - `bun run verify:video-agent`: passed after the alias fix, 12 tests, 51 assertions.
 - `repo-harness adopt --repo /Users/chris/Documents/growth-hacker --compact --sync-codegraph --json`: exited 0, refreshed repo-local workflow contract and handoff, synced CodeGraph, and reported `[workflow] OK`.
 - `repo-harness run check-task-workflow --strict`: passed with `[workflow] OK`.
-- Local operator smoke remains skipped: it is a live runtime/Hermes path, while this cleanup targeted the previously failing required acceptance gates.
+
+## Phase 3 - Local Operator Smoke
+
+- Smoke config used an isolated temp workspace at `/tmp/growth-hacker-video-smoke.fnGyAO`, with `growthRoot` under that temp directory, API bind port `18878`, and `videoWorkflowScheduler: false`; this kept the smoke off the user's real `~/.growth` state and prevented Hermes/provider execution.
+- `bun /Users/chris/Documents/growth-hacker/apps/server/src/index.ts` from the temp config directory: started successfully and reported `Growth Hacker dashboard API listening on http://127.0.0.1:18878`.
+- `curl -sS http://127.0.0.1:18878/api/health`: returned `{"ok":true,"growthRoot":"/tmp/growth-hacker-video-smoke.fnGyAO/growth"}`.
+- `bun run growthctl -- --server http://127.0.0.1:18878 capabilities`: passed and confirmed the local CLI could reach the server capability surface.
+- `bun run growthctl -- --server http://127.0.0.1:18878 video project create --input @examples/video-agent/project.json`: passed; project `vprj_mqlzgngv_2c8d7e3098bc43cc`, title `雨夜归伞`, status `draft`, revision `1`, source checksum `8d2b3a9f500926b23481852d59c7eaef8b219959a897f4630119c2249b8b0b80`.
+- `bun run growthctl -- --server http://127.0.0.1:18878 video workflow start vprj_mqlzgngv_2c8d7e3098bc43cc --idempotency-key video-agent-smoke-v1`: passed; run `vrun_mqlzgrwt_f84b74bf47fc417a`, status `queued`, current step `story_analysis`, progress `0`, all workflow steps pending.
+- `bun run growthctl -- --server http://127.0.0.1:18878 workflow events vrun_mqlzgrwt_f84b74bf47fc417a`: passed with one `workflow.created` event for `video.preproduction.v1` revision `1`; a bounded `--follow` smoke printed the same event before the local timeout stopped the continuous stream.
+- `bun run growthctl -- --server http://127.0.0.1:18878 video package export vprj_mqlzgngv_2c8d7e3098bc43cc --revision 1`: returned the expected guard envelope `ok: false`, error code `workflow_not_ready`, message `A completed preproduction package is required before export.` Classification: correct preproduction-package guard before Hermes-generated artifacts and approval, not a server crash.
+- `bun run growthctl -- --server http://127.0.0.1:18878 workflow status vrun_mqlzgrwt_f84b74bf47fc417a`: confirmed the run remained `queued` at `story_analysis` with no artifacts, which is expected because the smoke intentionally disabled the scheduler.
+- Server shutdown via `SIGINT` exited 0. Follow-up `curl -sS --max-time 2 http://127.0.0.1:18878/api/health || true` failed to connect, confirming the local listener was closed.
+- No Hermes request, paid media-provider call, OAuth mutation, upload, public publish, external render approval, or user's real Growth Hacker state was touched.
+- Post-smoke `repo-harness run check-task-workflow --strict` initially failed on handoff freshness (`resume.md < current.md`); `repo-harness adopt --repo /Users/chris/Documents/growth-hacker --compact --sync-codegraph --json` refreshed the handoff/CodeGraph state, and the final `repo-harness run check-task-workflow --strict` passed with `[workflow] OK`.
